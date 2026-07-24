@@ -117,9 +117,36 @@ class Abyssplayer : StreamWishExtractor() {
 }
 
 // --- 4. StreamHG Family ---
-class Hgcloud : StreamWishExtractor() {
-    override var name = "StreamHG"
-    override var mainUrl = "https://hgcloud.to"
+class Hgcloud : ExtractorApi() {
+    override val name = "StreamHG"
+    override val mainUrl = "https://hgcloud.to"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val id = url.substringAfterLast("/")
+        if (id.isBlank()) return
+        val apiUrl = "$mainUrl/api/source/$id"
+        val response = runCatching {
+            app.post(
+                apiUrl,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to url,
+                    "X-Requested-With" to "XMLHttpRequest"
+                )
+            ).text
+        }.getOrNull() ?: return
+
+        val m3u8Regex = Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
+        m3u8Regex.findAll(response).forEach { match ->
+            generateM3u8(name, match.groupValues[0], url).forEach(callback)
+        }
+    }
 }
 
 class Streamhg : StreamWishExtractor() {
