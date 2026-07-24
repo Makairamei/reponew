@@ -29,6 +29,7 @@ class AnichinProvider: Plugin() {
         registerExtractorAPI(DoodMyvidplay())
         registerExtractorAPI(Abyssplayer())
         registerExtractorAPI(Hgcloud())
+        registerExtractorAPI(Hanerix())
         registerExtractorAPI(Turbovidhls())
         registerExtractorAPI(Dtube())
         registerExtractorAPI(AnichinPlayerProxy())

@@ -658,6 +658,7 @@ class Anichin : MainAPI() {
         "playmogo.com",
         "abyssplayer.com",
         "hgcloud.to",
+        "hanerix.com",
         "rpmshare.com",
         "rpmplay.me",
         "earnvids.com",

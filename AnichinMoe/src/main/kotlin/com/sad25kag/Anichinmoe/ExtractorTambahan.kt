@@ -116,7 +116,7 @@ class Abyssplayer : StreamWishExtractor() {
     override var mainUrl = "https://abyssplayer.com"
 }
 
-// --- 4. StreamHG Family ---
+// --- 4. StreamHG / Hanerix Family ---
 class Hgcloud : ExtractorApi() {
     override val name = "StreamHG"
     override val mainUrl = "https://hgcloud.to"
@@ -128,24 +128,23 @@ class Hgcloud : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val id = url.substringAfterLast("/")
-        if (id.isBlank()) return
-        val apiUrl = "$mainUrl/api/source/$id"
-        val response = runCatching {
-            app.post(
-                apiUrl,
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Referer" to url,
-                    "X-Requested-With" to "XMLHttpRequest"
-                )
-            ).text
-        }.getOrNull() ?: return
+        val targetUrl = url.replace("hgcloud.to", "hanerix.com")
+        unpackAndEmitM3u8(name, targetUrl, referer ?: "https://anichin.moe/", callback)
+    }
+}
 
-        val m3u8Regex = Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
-        m3u8Regex.findAll(response).forEach { match ->
-            generateM3u8(name, match.groupValues[0], url).forEach(callback)
-        }
+class Hanerix : ExtractorApi() {
+    override val name = "StreamHG"
+    override val mainUrl = "https://hanerix.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        unpackAndEmitM3u8(name, url, referer ?: "https://anichin.moe/", callback)
     }
 }
 
