@@ -1,0 +1,137 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 89391780092,
+      "run_id": 30064188059,
+      "workflow_name": "Build",
+      "head_branch": "master",
+      "run_url": "https://api.github.com/repos/Makairamei/reponew/actions/runs/30064188059",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTh2W6s8AAAAU0CpQ_A",
+      "head_sha": "a3708a3ea02691ce37ceafe44ab87e44be82c7b5",
+      "url": "https://api.github.com/repos/Makairamei/reponew/actions/jobs/89391780092",
+      "html_url": "https://github.com/Makairamei/reponew/actions/runs/30064188059/job/89391780092",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-07-24T03:25:23Z",
+      "started_at": "2026-07-24T03:25:25Z",
+      "completed_at": "2026-07-24T03:27:01Z",
+      "name": "build",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-07-24T03:25:26Z",
+          "completed_at": "2026-07-24T03:25:27Z"
+        },
+        {
+          "name": "Checkout source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-07-24T03:25:27Z",
+          "completed_at": "2026-07-24T03:25:28Z"
+        },
+        {
+          "name": "Checkout builds branch",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-07-24T03:25:28Z",
+          "completed_at": "2026-07-24T03:25:28Z"
+        },
+        {
+          "name": "Detect changed plugins",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-07-24T03:25:28Z",
+          "completed_at": "2026-07-24T03:25:28Z"
+        },
+        {
+          "name": "Setup JDK 21",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-07-24T03:25:28Z",
+          "completed_at": "2026-07-24T03:25:33Z"
+        },
+        {
+          "name": "Setup Android SDK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-07-24T03:25:33Z",
+          "completed_at": "2026-07-24T03:25:50Z"
+        },
+        {
+          "name": "Access Secrets",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-07-24T03:25:50Z",
+          "completed_at": "2026-07-24T03:25:50Z"
+        },
+        {
+          "name": "Build Changed Plugins",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 8,
+          "started_at": "2026-07-24T03:25:50Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        },
+        {
+          "name": "Push builds",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9,
+          "started_at": "2026-07-24T03:27:00Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        },
+        {
+          "name": "Post Setup JDK 21",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-07-24T03:27:00Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        },
+        {
+          "name": "Post Checkout builds branch",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-07-24T03:27:00Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        },
+        {
+          "name": "Post Checkout source",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-07-24T03:27:00Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-07-24T03:27:00Z",
+          "completed_at": "2026-07-24T03:27:00Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Makairamei/reponew/check-runs/89391780092",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000694,
+      "runner_name": "GitHub Actions 1000000694",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}

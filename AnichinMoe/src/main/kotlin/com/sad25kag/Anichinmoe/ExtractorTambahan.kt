@@ -2,7 +2,7 @@ package com.sad25kag.Anichinmoe
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.extractors.DoodStreamExtractor
+import com.lagradost.cloudstream3.extractors.DoodLaExtractor
 import com.lagradost.cloudstream3.extractors.StreamWishExtractor
 import com.lagradost.cloudstream3.extractors.VidHidePro
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -14,12 +14,12 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 // --- 1. DoodStream / Doods Family ---
-class DoodPlaymogo : DoodStreamExtractor() {
+class DoodPlaymogo : DoodLaExtractor() {
     override var name = "Doods"
     override var mainUrl = "https://playmogo.com"
 }
 
-class DoodMyvidplay : DoodStreamExtractor() {
+class DoodMyvidplay : DoodLaExtractor() {
     override var name = "Doods"
     override var mainUrl = "https://myvidplay.com"
 }
