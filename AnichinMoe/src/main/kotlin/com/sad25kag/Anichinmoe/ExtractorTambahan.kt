@@ -4,7 +4,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.extractors.DoodStreamExtractor
 import com.lagradost.cloudstream3.extractors.StreamWishExtractor
-import com.lagradost.cloudstream3.extractors.VidHideExtractor
+import com.lagradost.cloudstream3.extractors.VidHidePro
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -25,46 +25,46 @@ class DoodMyvidplay : DoodStreamExtractor() {
 }
 
 // --- 2. VidHide / StreamHide Family ---
-class Morencius : VidHideExtractor() {
+class Morencius : VidHidePro() {
     override var name = "Vidhide / Earnvids"
     override var mainUrl = "https://morencius.com"
 }
 
-class VidHidePro1 : VidHideExtractor() {
+class VidHidePro1 : VidHidePro() {
     override var mainUrl = "https://filelions.live"
 }
 
-class Rpmshare : VidHideExtractor() {
+class Rpmshare : VidHidePro() {
     override var name = "RpmShare"
     override var mainUrl = "https://rpmshare.com"
 }
 
-class RpmshareSub : VidHideExtractor() {
+class RpmshareSub : VidHidePro() {
     override var name = "RpmShare"
     override var mainUrl = "https://rpmshare.net"
 }
 
-class Rpmplay : VidHideExtractor() {
+class Rpmplay : VidHidePro() {
     override var name = "RpmShare"
     override var mainUrl = "https://endstar.rpmplay.me"
 }
 
-class Earnvids : VidHideExtractor() {
+class Earnvids : VidHidePro() {
     override var name = "EarnVids"
     override var mainUrl = "https://earnvids.com"
 }
 
-class Smoothpre : VidHideExtractor() {
+class Smoothpre : VidHidePro() {
     override var name = "EarnVids"
     override var mainUrl = "https://smoothpre.com"
 }
 
-class Dhtpre : VidHideExtractor() {
+class Dhtpre : VidHidePro() {
     override var name = "EarnVids"
     override var mainUrl = "https://dhtpre.com"
 }
 
-class Peytonepre : VidHideExtractor() {
+class Peytonepre : VidHidePro() {
     override var name = "EarnVids"
     override var mainUrl = "https://peytonepre.com"
 }
@@ -92,7 +92,7 @@ class StreamhgSub : StreamWishExtractor() {
 }
 
 // --- 5. TurboVIP / VidHide HLS Family ---
-class Turbovidhls : VidHideExtractor() {
+class Turbovidhls : VidHidePro() {
     override var name = "TurboVIP"
     override var mainUrl = "https://turbovidhls.com"
 }
