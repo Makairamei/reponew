@@ -36,18 +36,6 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
 
-          echo "=== Changed Files ==="
-          git diff --name-only HEAD^ HEAD || true
-
-          # Memeriksa apakah ada perubahan pada konfigurasi global dasar
-          global_change=false
-          if git diff --name-only HEAD^ HEAD 2>/dev/null | grep -E "^(build\.gradle\.kts|settings\.gradle\.kts|gradle\.properties|\.github/)"; then
-            global_change=true
-          else
-            global_change=true
-          fi
-
-          # Mendata seluruh provider aktif yang tersedia di dalam proyek
           all_plugins=""
           for dir in *; do
             if [ -d "$dir" ] && [ -f "$dir/build.gradle.kts" ] && [ "$dir" != "buildSrc" ]; then
@@ -56,23 +44,8 @@ jobs:
           done
           all_plugins=$(echo $all_plugins | xargs)
 
-          if [ "$global_change" = "true" ]; then
-            echo "Global configuration changed. Rebuilding all plugins."
-            plugins="$all_plugins"
-          else
-            # Mengambil nama folder utama dari berkas-berkas yang dimodifikasi
-            changed_dirs=$(git diff --name-only HEAD^ HEAD | awk -F/ '{print $1}' | sort -u)
-            plugins=""
-            for dir in $changed_dirs; do
-              if [ -d "$dir" ] && [ -f "$dir/build.gradle.kts" ] && [ "$dir" != "buildSrc" ]; then
-                plugins="$plugins $dir"
-              fi
-            done
-            plugins=$(echo $plugins | xargs)
-          fi
-
-          echo "Detected plugins to build: $plugins"
-          echo "plugins=$plugins" >> $GITHUB_OUTPUT
+          echo "Target plugins to build: $all_plugins"
+          echo "plugins=$all_plugins" >> $GITHUB_OUTPUT
           echo "all_plugins=$all_plugins" >> $GITHUB_OUTPUT
 
       - name: Setup JDK 21
