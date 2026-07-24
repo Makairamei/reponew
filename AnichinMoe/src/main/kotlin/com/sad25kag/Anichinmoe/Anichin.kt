@@ -312,13 +312,11 @@ class Anichin : MainAPI() {
 
         val dailyUrl = normalizeDailymotionUrl(fixed)
         if (dailyUrl != null) {
-            val loaded = try {
+            try {
                 loadExtractor(dailyUrl, referer, subtitleCallback, callback)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                false
             }
-            if (loaded) return
         }
 
         if (shouldUseExtractor(fixed)) {
@@ -574,13 +572,7 @@ class Anichin : MainAPI() {
 
 
     private fun shouldReadNestedPage(url: String): Boolean {
-        val value = url.lowercase()
-        return value.contains("/embed", true) ||
-            value.contains("/player", true) ||
-            value.contains("/video", true) ||
-            value.contains("/v/", true) ||
-            value.contains("mirrored.to", true) ||
-            value.contains("apk.miuiku.com", true)
+        return true
     }
 
     private fun shouldSkipBodyRead(contentType: String, contentLength: Long?): Boolean {
