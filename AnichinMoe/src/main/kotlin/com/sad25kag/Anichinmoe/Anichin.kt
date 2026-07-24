@@ -516,9 +516,19 @@ class Anichin : MainAPI() {
             value.contains("rumble.com") ||
             value.contains("vidguard") ||
             value.contains("vidhide") ||
+            value.contains("morencius") ||
+            value.contains("playmogo") ||
+            value.contains("myvidplay") ||
+            value.contains("dood") ||
+            value.contains("abyssplayer") ||
+            value.contains("hgcloud") ||
+            value.contains("turbovidhls") ||
+            value.contains("d.tube") ||
+            value.contains("anichin-player.web.id") ||
             value.contains("streamruby") ||
             value.contains("streamruby.com") ||
             value.contains("rpmshare") ||
+            value.contains("rpmplay") ||
             value.contains("earnvids") ||
             value.contains("smoothpre") ||
             value.contains("dhtpre") ||
