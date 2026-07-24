@@ -57,7 +57,7 @@ class DoodMyvidplay : DoodLaExtractor() {
 
 // --- 2. VidHide / StreamHide Family ---
 class Morencius : ExtractorApi() {
-    override val name = "Earnvids / Vidhide"
+    override val name = "Earnvids"
     override val mainUrl = "https://morencius.com"
     override val requiresReferer = true
 
