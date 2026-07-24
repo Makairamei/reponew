@@ -17,5 +17,17 @@ class AnichinProvider: Plugin() {
         registerExtractorAPI(Rumble())
         registerExtractorAPI(StreamRuby())
         registerExtractorAPI(Vidguardto())
+        registerExtractorAPI(Rpmshare())
+        registerExtractorAPI(RpmshareSub())
+        registerExtractorAPI(Earnvids())
+        registerExtractorAPI(Smoothpre())
+        registerExtractorAPI(Dhtpre())
+        registerExtractorAPI(Peytonepre())
+        registerExtractorAPI(Newplayr())
+        registerExtractorAPI(NewplayrSub())
+        registerExtractorAPI(Streamhg())
+        registerExtractorAPI(StreamhgSub())
+        registerExtractorAPI(StreamWish())
+        registerExtractorAPI(StreamWishSub())
     }
 }

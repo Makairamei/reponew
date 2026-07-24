@@ -518,6 +518,14 @@ class Anichin : MainAPI() {
             value.contains("vidhide") ||
             value.contains("streamruby") ||
             value.contains("streamruby.com") ||
+            value.contains("rpmshare") ||
+            value.contains("earnvids") ||
+            value.contains("smoothpre") ||
+            value.contains("dhtpre") ||
+            value.contains("peytonepre") ||
+            value.contains("newplayr") ||
+            value.contains("streamhg") ||
+            value.contains("streamwish") ||
             value.contains("acefile") ||
             value.contains("pahe") ||
             value.contains("hxfile") ||
@@ -539,9 +547,11 @@ class Anichin : MainAPI() {
             value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 0
             value.contains("ok.ru") || value.contains("odnoklassniki.ru") -> 1
             value.contains("streamruby") -> 2
-            value.contains("vidguard") || value.contains("vidhide") -> 3
-            value.contains("rumble.com") -> 4
-            value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 5
+            value.contains("rpmshare") || value.contains("earnvids") -> 3
+            value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 4
+            value.contains("vidguard") || value.contains("vidhide") -> 5
+            value.contains("rumble.com") -> 6
+            value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 7
             else -> 10
         }
     }
