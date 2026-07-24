@@ -218,12 +218,25 @@ class Anichin : MainAPI() {
                     subtitleCallback = subtitleCallback,
                     callback = countedCallback,
                 )
-                if (emitted.size == before) {
-                    Log.d("Anichin", "Server produced no links, trying next: $label -> $url")
+                
+                // Fallback: Jika extractor gagal/timeout di HP, sajikan direct embed link dengan label server resminya
+                if (emitted.size == before && !url.contains("beacon") && !url.contains("analytics")) {
+                    countedCallback(
+                        newExtractorLink(
+                            source = label.ifBlank { "Anichin" },
+                            name = label.ifBlank { "Anichin" },
+                            url = url,
+                            type = ExtractorLinkType.VIDEO,
+                        ) {
+                            this.referer = episodeUrl
+                            this.quality = Qualities.P1080.value
+                            this.headers = mapOf("User-Agent" to USER_AGENT, "Referer" to episodeUrl)
+                        }
+                    )
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                Log.w("Anichin", "Failed resolving server, trying next: $label -> $url", error)
+                Log.w("Anichin", "Failed resolving server: $label -> $url", error)
             }
         }
 
