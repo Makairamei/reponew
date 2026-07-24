@@ -8,10 +8,41 @@ import com.lagradost.cloudstream3.extractors.VidHidePro
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
+
+private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+// --- Helper unpacker ---
+private suspend fun unpackAndEmitM3u8(
+    sourceName: String,
+    url: String,
+    referer: String,
+    callback: (ExtractorLink) -> Unit
+) {
+    try {
+        val html = app.get(url, headers = mapOf("User-Agent" to USER_AGENT, "Referer" to referer)).text
+        val unpacked = getAndUnpack(html)
+        val m3u8Regex = Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
+        val matches = m3u8Regex.findAll(unpacked).map { it.value }.toList()
+        
+        if (matches.isNotEmpty()) {
+            matches.forEach { streamUrl ->
+                generateM3u8(sourceName, streamUrl, url).forEach(callback)
+            }
+        } else {
+            // Direct regex check on html if unpack fails
+            val directMatches = m3u8Regex.findAll(html).map { it.value }.toList()
+            directMatches.forEach { streamUrl ->
+                generateM3u8(sourceName, streamUrl, url).forEach(callback)
+            }
+        }
+    } catch (e: Exception) {
+        // Ignored
+    }
+}
 
 // --- 1. DoodStream / Doods Family ---
 class DoodPlaymogo : DoodLaExtractor() {
@@ -25,9 +56,19 @@ class DoodMyvidplay : DoodLaExtractor() {
 }
 
 // --- 2. VidHide / StreamHide Family ---
-class Morencius : VidHidePro() {
-    override var name = "Vidhide / Earnvids"
-    override var mainUrl = "https://morencius.com"
+class Morencius : ExtractorApi() {
+    override val name = "Earnvids / Vidhide"
+    override val mainUrl = "https://morencius.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        unpackAndEmitM3u8(name, url, referer ?: "https://anichin.moe/", callback)
+    }
 }
 
 class VidHidePro1 : VidHidePro() {
@@ -91,13 +132,29 @@ class StreamhgSub : StreamWishExtractor() {
     override var mainUrl = "https://streamhg.net"
 }
 
-// --- 5. TurboVIP / VidHide HLS Family ---
+// --- 5. StreamRuby Extractor ---
+class Rubyvidhub : ExtractorApi() {
+    override val name = "Streamruby"
+    override val mainUrl = "https://rubyvidhub.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        unpackAndEmitM3u8(name, url, referer ?: "https://anichin.moe/", callback)
+    }
+}
+
+// --- 6. TurboVIP / VidHide HLS Family ---
 class Turbovidhls : VidHidePro() {
     override var name = "TurboVIP"
     override var mainUrl = "https://turbovidhls.com"
 }
 
-// --- 6. D-Tube Extractor ---
+// --- 7. D-Tube Extractor ---
 class Dtube : ExtractorApi() {
     override val name = "D-Tube"
     override val mainUrl = "https://play.d.tube"
@@ -125,7 +182,7 @@ class Dtube : ExtractorApi() {
     }
 }
 
-// --- 7. StreamWish Family ---
+// --- 8. StreamWish Family ---
 class Newplayr : StreamWishExtractor() {
     override var name = "NewPlayr"
     override var mainUrl = "https://newplayr.com"
@@ -146,7 +203,7 @@ class StreamWishSub : StreamWishExtractor() {
     override var mainUrl = "https://streamwish.com"
 }
 
-// --- 8. Anichin Proxy Player (Anichin Player Embed Proxy) ---
+// --- 9. Anichin Proxy Player (Anichin Player Embed Proxy) ---
 class AnichinPlayerProxy : ExtractorApi() {
     override val name = "Anichin Player"
     override val mainUrl = "https://anichin-player.web.id"
@@ -159,9 +216,8 @@ class AnichinPlayerProxy : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val headersMap = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to "https://anichin.moe/",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            "User-Agent" to USER_AGENT,
+            "Referer" to "https://anichin.moe/"
         )
         val response = runCatching { app.get(url, headers = headersMap, referer = "https://anichin.moe/").text }.getOrNull() ?: return
         

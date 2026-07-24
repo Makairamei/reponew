@@ -32,6 +32,7 @@ class AnichinProvider: Plugin() {
         registerExtractorAPI(Turbovidhls())
         registerExtractorAPI(Dtube())
         registerExtractorAPI(AnichinPlayerProxy())
+        registerExtractorAPI(Rubyvidhub())
         registerExtractorAPI(Newplayr())
         registerExtractorAPI(NewplayrSub())
         registerExtractorAPI(Streamhg())
