@@ -207,7 +207,7 @@ class Anichin : MainAPI() {
             )
             .take(MAX_TOP_LEVEL_CANDIDATES)
 
-        for ((url, label) in topLevelCandidates) {
+        topLevelCandidates.amap { (url, label) ->
             try {
                 resolveVideoCandidate(
                     url = url,
