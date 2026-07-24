@@ -158,37 +158,42 @@ class AnichinPlayerProxy : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val response = runCatching { app.get(url, referer = "https://anichin.moe/").text }.getOrNull() ?: return
+        val headersMap = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to "https://anichin.moe/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
+        val response = runCatching { app.get(url, headers = headersMap, referer = "https://anichin.moe/").text }.getOrNull() ?: return
         
-        // 1. Dailymotion
+        // 1. Dailymotion Parsing
         val dmMatch = Regex("""video=([A-Za-z0-9]+)""").find(response) 
             ?: Regex("""src=["'](https?://[^"']*dailymotion\.com/[^"']+)["']""").find(response)
         if (dmMatch != null) {
             val videoId = dmMatch.groupValues[1]
             val dmUrl = if (videoId.startsWith("http")) videoId else "https://www.dailymotion.com/embed/video/$videoId"
-            com.lagradost.cloudstream3.utils.loadExtractor(dmUrl, url, subtitleCallback, callback)
+            com.lagradost.cloudstream3.utils.loadExtractor(dmUrl, "https://anichin.moe/", subtitleCallback, callback)
         }
 
-        // 2. OK.ru
+        // 2. OK.ru Parsing
         val okMatch = Regex("""src=["'](https?://ok\.ru/videoembed/[0-9]+)["']""").find(response)
             ?: Regex("""ok=([0-9]+)""").find(url)
         if (okMatch != null) {
             val okId = okMatch.groupValues[1]
             val okUrl = if (okId.startsWith("http")) okId else "https://ok.ru/videoembed/$okId"
-            com.lagradost.cloudstream3.utils.loadExtractor(okUrl, url, subtitleCallback, callback)
+            com.lagradost.cloudstream3.utils.loadExtractor(okUrl, "https://anichin.moe/", subtitleCallback, callback)
         }
 
-        // 3. Any inner iframe
+        // 3. Inner Iframe (Streamruby, Vidhide, Earnvids, Abyss, dll)
         Regex("""src=["'](https?://[^"']+)["']""").findAll(response).forEach { match ->
             val innerUrl = match.groupValues[1]
             if (!innerUrl.contains("cloudflare") && !innerUrl.contains("anichin-player")) {
-                com.lagradost.cloudstream3.utils.loadExtractor(innerUrl, url, subtitleCallback, callback)
+                com.lagradost.cloudstream3.utils.loadExtractor(innerUrl, "https://anichin.moe/", subtitleCallback, callback)
             }
         }
 
-        // 4. m3u8
+        // 4. Direct m3u8 Stream
         Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""").findAll(response).forEach { match ->
-            generateM3u8(name, match.groupValues[1], url).forEach(callback)
+            generateM3u8(name, match.groupValues[1], "https://anichin.moe/").forEach(callback)
         }
     }
 }
