@@ -9,7 +9,7 @@
             "sad25kag"
         ],
         "description": "Anichin Moe",
-        "fileSize": 65835,
+        "fileSize": 68661,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://anichin.club&size=%size%",
         "apiVersion": 1,
-        "fileHash": "sha256-7ecc401017bd3fc049dcd54796340d9fbe33a8da872daf8e3d5f08c82f07a0b5"
+        "fileHash": "sha256-4d96ee01143166b5ecef96a000bff8db79f380f499b3d151b31ed979967f41d5"
     }
 ]
