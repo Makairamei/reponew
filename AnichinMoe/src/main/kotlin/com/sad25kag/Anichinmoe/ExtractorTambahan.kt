@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
@@ -175,7 +176,7 @@ class AnichinPlayerProxy : ExtractorApi() {
         // Check for m3u8 or mp4
         val m3u8Match = Regex("""["']([^"']+\.m3u8[^"']*)["']""").find(response)
         if (m3u8Match != null) {
-            M3u8Helper.generateM3u8(name, m3u8Match.groupValues[1], url).forEach(callback)
+            generateM3u8(name, m3u8Match.groupValues[1], url).forEach(callback)
         }
     }
 }
