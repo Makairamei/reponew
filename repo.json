@@ -1,0 +1,9 @@
+{
+    "name": "Makairamei CloudStream Repo",
+    "description": "Repository CloudStream khusus AnichinMoe & provider terupdate.",
+    "iconUrl": "https://avatars.githubusercontent.com/u/114850487?v=4",
+    "manifestVersion": 1,
+    "pluginLists": [
+        "https://raw.githubusercontent.com/Makairamei/reponew/builds/plugins.json"
+    ]
+}
