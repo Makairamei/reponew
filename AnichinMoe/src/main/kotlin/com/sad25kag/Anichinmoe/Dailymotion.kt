@@ -24,9 +24,31 @@ class Geodailymotion : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val videoId = Regex("""video=([A-Za-z0-9]+)""").find(url)?.groupValues?.getOrNull(1)
-            ?: url.substringAfterLast("/")
-        val dmUrl = "https://www.dailymotion.com/embed/video/$videoId"
-        com.lagradost.cloudstream3.utils.loadExtractor(dmUrl, referer, subtitleCallback, callback)
+            ?: url.substringAfterLast("?").substringAfterLast("/")
+        if (videoId.isBlank()) return
+
+        val metadataUrl = "https://geo.dailymotion.com/video/$videoId.json?legacy=true"
+        val response = runCatching {
+            app.get(
+                metadataUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept" to "application/json,text/plain,*/*"
+                )
+            ).text
+        }.getOrNull() ?: return
+
+        val json = runCatching { JSONObject(response) }.getOrNull() ?: return
+        val qualitiesObj = json.optJSONObject("qualities") ?: return
+        val autoArray = qualitiesObj.optJSONArray("auto") ?: return
+
+        for (i in 0 until autoArray.length()) {
+            val item = autoArray.optJSONObject(i) ?: continue
+            val m3u8Url = item.optString("url")
+            if (m3u8Url.isNotBlank()) {
+                generateM3u8(name, m3u8Url, url).forEach(callback)
+            }
+        }
     }
 }
 
