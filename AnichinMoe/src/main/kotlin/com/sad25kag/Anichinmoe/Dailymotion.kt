@@ -12,9 +12,22 @@ import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-class Geodailymotion : Dailymotion() {
-    override val name = "GeoDailymotion"
+class Geodailymotion : ExtractorApi() {
+    override val name = "Dailymotion"
     override val mainUrl = "https://geo.dailymotion.com"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val videoId = Regex("""video=([A-Za-z0-9]+)""").find(url)?.groupValues?.getOrNull(1)
+            ?: url.substringAfterLast("/")
+        val dmUrl = "https://www.dailymotion.com/embed/video/$videoId"
+        com.lagradost.cloudstream3.utils.loadExtractor(dmUrl, referer, subtitleCallback, callback)
+    }
 }
 
 open class Dailymotion : ExtractorApi() {
