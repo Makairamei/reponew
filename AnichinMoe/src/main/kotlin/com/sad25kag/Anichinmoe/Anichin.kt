@@ -385,18 +385,22 @@ class Anichin : MainAPI() {
 
     private fun decodeServerUrls(value: String): List<String> {
         val decodedValues = linkedSetOf<String>()
-        val cleanValue = value.trim().htmlUnescape().cleanEscaped()
-        if (cleanValue.isBlank()) return emptyList()
+        val rawParts = value.split("|").map { it.trim() }
+        
+        for (part in rawParts) {
+            val cleanValue = part.htmlUnescape().cleanEscaped()
+            if (cleanValue.isBlank()) continue
 
-        decodedValues.add(cleanValue)
-        runCatching { URLDecoder.decode(cleanValue, "UTF-8") }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { decodedValues.add(it.htmlUnescape().cleanEscaped()) }
+            decodedValues.add(cleanValue)
+            runCatching { URLDecoder.decode(cleanValue, "UTF-8") }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { decodedValues.add(it.htmlUnescape().cleanEscaped()) }
 
-        decodeBase64Value(cleanValue)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { decodedValues.add(it.htmlUnescape().cleanEscaped()) }
+            decodeBase64Value(cleanValue)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { decodedValues.add(it.htmlUnescape().cleanEscaped()) }
+        }
 
         val results = linkedSetOf<String>()
         decodedValues.forEach { decoded ->
@@ -419,9 +423,11 @@ class Anichin : MainAPI() {
         val normalized = value.trim()
         if (normalized.length < 8) return null
 
-        return runCatching { base64Decode(normalized) }.getOrNull()
+        val b64Part = if (normalized.contains("|")) normalized.substringAfterLast("|").trim() else normalized
+
+        return runCatching { base64Decode(b64Part) }.getOrNull()
             ?: runCatching {
-                val fixed = normalized
+                val fixed = b64Part
                     .replace('-', '+')
                     .replace('_', '/')
                     .let { raw ->
@@ -642,6 +648,24 @@ class Anichin : MainAPI() {
         "dai.ly",
         "ok.ru",
         "odnoklassniki.ru",
+        "anichin-player.web.id",
+        "morencius.com",
+        "playmogo.com",
+        "abyssplayer.com",
+        "hgcloud.to",
+        "rpmshare.com",
+        "rpmplay.me",
+        "earnvids.com",
+        "smoothpre.com",
+        "dhtpre.com",
+        "peytonepre.com",
+        "newplayr.com",
+        "streamhg.com",
+        "streamwish.to",
+        "turbovidhls.com",
+        "d.tube",
+        "rumble.com",
+        "rubyvidhub.com"
     )
 
 
