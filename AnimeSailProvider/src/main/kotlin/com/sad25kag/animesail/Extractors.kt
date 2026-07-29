@@ -257,7 +257,7 @@ class Pixeldrain : ExtractorApi() {
     }
 }
 
-/** Krakenfiles — GET only (no app.post) */
+/** Krakenfiles — GET only */
 class Krakenfiles : ExtractorApi() {
     override var name = "Kraken"
     override var mainUrl = "https://krakenfiles.com"
@@ -303,4 +303,112 @@ class Krakenfiles : ExtractorApi() {
             )
         }
     }
+}
+
+/**
+ * Doodstream family — AnimeSail labels this **"Dodo"**.
+ * Site: aghanim.xyz/tools/redirect/?id=XXX → dood-like /e/ or /v/.
+ */
+open class DoodStreamSail : ExtractorApi() {
+    override var name = "Dodo"
+    override var mainUrl = "https://dood.watch"
+    override val requiresReferer = true
+
+    private val passMd5 = Regex("""(/pass_md5/[^"'\\\s]+)""")
+    private val tokenRe = Regex("""[?&]token=([A-Za-z0-9]+)""")
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
+            .find(url)?.groupValues?.getOrNull(1)
+            ?: return
+
+        val hosts = linkedSetOf(
+            mainUrl.trimEnd('/'),
+            "https://dood.watch",
+            "https://dood.ws",
+            "https://dood.li",
+            "https://dood.so",
+            "https://dood.to",
+            "https://dood.la",
+            "https://dood.pm",
+            "https://dood.wf",
+            "https://dood.yt",
+            "https://dood.re",
+            "https://d000d.com",
+            "https://ds2play.com",
+            "https://doply.net",
+            "https://vide0.net",
+            "https://myvidplay.com",
+            "https://rasa-cintaku-semakin-berantai.xyz",
+        )
+
+        for (host in hosts) {
+            val embed = "$host/e/$id"
+            val page = runCatching {
+                app.get(
+                    embed,
+                    referer = referer ?: "$host/",
+                    headers = mapOf("User-Agent" to USER_AGENT, "Referer" to (referer ?: "$host/")),
+                ).text
+            }.getOrNull() ?: continue
+
+            val md5Path = passMd5.find(page)?.groupValues?.getOrNull(1) ?: continue
+            val md5Url = if (md5Path.startsWith("http")) md5Path else "$host$md5Path"
+            val base = runCatching {
+                app.get(
+                    md5Url,
+                    referer = embed,
+                    headers = mapOf("User-Agent" to USER_AGENT, "Referer" to embed),
+                ).text.trim()
+            }.getOrNull() ?: continue
+
+            if (!base.startsWith("http")) continue
+
+            val token = tokenRe.find(page)?.groupValues?.getOrNull(1).orEmpty()
+            val stream = when {
+                token.isNotBlank() && !base.contains("token=") ->
+                    "$base${if (base.contains("?")) "&" else "?"}token=$token&expiry=${System.currentTimeMillis()}"
+                else -> base
+            }
+
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = stream,
+                    type = ExtractorLinkType.VIDEO,
+                ) {
+                    this.referer = embed
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to embed,
+                        "Accept" to "*/*",
+                    )
+                }
+            )
+            return
+        }
+    }
+}
+
+class DoodWatch : DoodStreamSail() {
+    override var mainUrl = "https://dood.watch"
+}
+
+class DoodWs : DoodStreamSail() {
+    override var mainUrl = "https://dood.ws"
+}
+
+class DoodLi : DoodStreamSail() {
+    override var mainUrl = "https://dood.li"
+}
+
+class DoodRasa : DoodStreamSail() {
+    override var mainUrl = "https://rasa-cintaku-semakin-berantai.xyz"
 }

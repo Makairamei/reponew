@@ -13,7 +13,6 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.mvvm.safeApiCall
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -262,41 +261,31 @@ class AnimeSailProvider : MainAPI() {
 
         document.select(".mobius > .mirror > option, .mirror option, option[data-em]").amap { element ->
             safeApiCall {
-                val encodedData = element.attr("data-em")
-                if (encodedData.isBlank()) return@safeApiCall
+                val encodedData = element.attr("data-em").ifBlank { element.attr("value") }
+                if (encodedData.isBlank() || encodedData.equals("0") || encodedData.length < 8) return@safeApiCall
 
-                val iframe = fixUrl(Jsoup.parse(base64Decode(encodedData)).select("iframe").attr("src"))
+                val decodedHtml = runCatching { base64Decode(encodedData) }.getOrNull() ?: return@safeApiCall
+                val iframe = fixUrl(
+                    Jsoup.parse(decodedHtml)
+                        .select("iframe[src], embed[src], source[src], video[src]")
+                        .firstOrNull()
+                        ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+                        .orEmpty()
+                )
                 if (iframe.contains("statistic") || iframe.isBlank()) return@safeApiCall
 
                 val rawText = element.text().trim()
                 val quality = getIndexQuality(rawText)
-
-                val serverName = rawText.split(" ").firstOrNull()?.replaceFirstChar {
-                    if (it.isLowerCase()) it.titlecase() else it.toString()
-                } ?: name
+                val serverName = cleanMirrorName(rawText)
 
                 when {
-                    iframe.endsWith(".mp4", ignoreCase = true) || iframe.endsWith(".m3u8", ignoreCase = true) -> {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = serverName,
-                                name = serverName,
-                                url = iframe,
-                                type = if (iframe.endsWith(".m3u8", ignoreCase = true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                referer = mainUrl
-                                this.quality = quality
-                                this.headers = mapOf(
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                    "Referer" to mainUrl,
-                                    "Origin" to mainUrl,
-                                    "Accept" to "*/*",
-                                )
-                            }
-                        )
+                    iframe.endsWith(".mp4", true) || iframe.endsWith(".m3u8", true) ||
+                        iframe.contains(".mp4?", true) || iframe.contains(".m3u8?", true) -> {
+                        emitDirectMedia(serverName, iframe, quality, mainUrl, callback)
                     }
 
-                    iframe.contains("${playerPath}popup") -> {
+                    iframe.contains("${playerPath}popup") || iframe.contains("popup.php") ||
+                        iframe.contains("popup?", true) -> {
                         val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
                         if (encodedUrl.isNotBlank()) {
                             val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
@@ -304,69 +293,45 @@ class AnimeSailProvider : MainAPI() {
                         }
                     }
 
-                    iframe.contains("player-kodir.aghanim.xyz") || iframe.contains("${playerPath}kodir2") -> {
-                        val res = request(iframe, ref = data).text
-                        var link = Jsoup.parse(res.substringAfter("= `", "").substringBefore("`;", "")).select("source").last()?.attr("src")
+                    iframe.contains("player-kodir") || iframe.contains("${playerPath}kodir") ||
+                        iframe.contains("kodir2") -> {
+                        resolveSitePlayer(iframe, data, serverName, quality, callback)
+                    }
 
-                        if (link.isNullOrBlank()) {
-                            link = Jsoup.parse(res).select("source").attr("src")
-                        }
-
-                        if (!link.isNullOrBlank()) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = serverName,
-                                    name = serverName,
-                                    url = link,
-                                    type = INFER_TYPE
-                                ) {
-                                    referer = iframe
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                        "Referer" to iframe,
-                                        "Accept" to "*/*",
-                                    )
-                                }
-                            )
+                    iframe.contains("${playerPath}framezilla") || iframe.contains("uservideo.xyz") ||
+                        iframe.contains("framezilla") -> {
+                        val res = request(iframe, ref = data)
+                        if (isTurnstileGate(res.text)) {
+                            // Still gated — request() should have solved; retry once
+                            val retry = request(iframe, ref = data)
+                            parseInnerPlayer(retry, iframe, serverName, quality, mainUrl, subtitleCallback, callback)
+                        } else {
+                            parseInnerPlayer(res, iframe, serverName, quality, mainUrl, subtitleCallback, callback)
                         }
                     }
 
-                    iframe.contains("${playerPath}framezilla") || iframe.contains("uservideo.xyz") -> {
-                        val doc = request(iframe, ref = data).document
-                        val innerLink = doc.select("iframe").attr("src")
-                        if (innerLink.isNotBlank()) {
-                            loadFixedExtractor(fixUrl(innerLink), serverName, quality, mainUrl, subtitleCallback, callback)
+                    // Dodo path: tools/redirect → dood-like hosts
+                    iframe.contains("/tools/redirect/") || iframe.contains("aghanim.xyz/tools/redirect/") -> {
+                        val id = iframe.substringAfter("id=").substringBefore("&").trim()
+                        if (id.isNotBlank()) {
+                            resolveDodoRedirect(id, serverName, quality, mainUrl, subtitleCallback, callback)
                         }
                     }
 
-                    iframe.contains("aghanim.xyz/tools/redirect/") -> {
-                        val id = iframe.substringAfter("id=").substringBefore("&token")
-                        val link = "https://rasa-cintaku-semakin-berantai.xyz/v/$id"
-                        loadFixedExtractor(link, serverName, quality, mainUrl, subtitleCallback, callback)
+                    // Lokal / Buzi / any utils/player/* page (often CF-gated HTML5 source)
+                    iframe.contains(playerPath) || iframe.contains("/utils/player") ||
+                        (iframe.contains(mainUrl) && (iframe.contains("player") || iframe.contains("embed"))) -> {
+                        resolveSitePlayer(iframe, data, serverName, quality, callback)
                     }
 
-                    iframe.contains(playerPath) -> {
-                        val doc = request(iframe, ref = data).document
-                        val link = doc.select("source").attr("src")
-                        if (link.isNotBlank()) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = serverName,
-                                    name = serverName,
-                                    url = link,
-                                    type = INFER_TYPE
-                                ) {
-                                    referer = iframe
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                        "Referer" to iframe,
-                                        "Accept" to "*/*",
-                                    )
-                                }
-                            )
-                        }
+                    // Label hints for Dodo even if URL shape odd
+                    serverName.contains("dodo", true) || iframe.contains("dood", true) ||
+                        iframe.contains("doply", true) || iframe.contains("vide0", true) ||
+                        iframe.contains("rasa-cintaku", true) -> {
+                        loadFixedExtractor(iframe, "Dodo", quality, mainUrl, subtitleCallback, callback)
+                        // also try id hop
+                        val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(iframe)?.groupValues?.getOrNull(1)
+                        if (id != null) resolveDodoRedirect(id, "Dodo", quality, mainUrl, subtitleCallback, callback)
                     }
 
                     else -> {
@@ -376,6 +341,195 @@ class AnimeSailProvider : MainAPI() {
             }
         }
         return true
+    }
+
+    private fun cleanMirrorName(raw: String): String {
+        val t = raw.trim()
+            .replace(Regex("""\[.*?\]"""), "")
+            .replace(Regex("""\(.*?\)"""), "")
+            .trim()
+        val first = t.split(Regex("""\s+""")).firstOrNull().orEmpty()
+        return first.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            .ifBlank { name }
+    }
+
+    private fun isTurnstileGate(html: String): Boolean {
+        val h = html.lowercase()
+        return h.contains("turnstile") || h.contains("challenges.cloudflare") ||
+            (h.contains("loading..") && h.contains("cf-turnstile")) ||
+            h.contains("_as_turnstile") && h.length < 20000 && !h.contains("data-em")
+    }
+
+    private fun mediaHeaders(ref: String): Map<String, String> = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to ref,
+        "Origin" to mainUrl,
+        "Accept" to "*/*",
+    )
+
+    private suspend fun emitDirectMedia(
+        serverName: String,
+        stream: String,
+        quality: Int,
+        ref: String,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val absolute = when {
+            stream.startsWith("//") -> "https:$stream"
+            stream.startsWith("http") -> stream
+            else -> fixUrl(stream)
+        }
+        if (absolute.isBlank()) return
+        callback(
+            newExtractorLink(
+                source = serverName,
+                name = serverName,
+                url = absolute,
+                type = if (absolute.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO,
+            ) {
+                this.referer = ref
+                this.quality = quality
+                this.headers = mediaHeaders(ref)
+            }
+        )
+    }
+
+    /** Lokal / site HTML5 player — always go through Turnstile interceptor via request() */
+    private suspend fun resolveSitePlayer(
+        iframe: String,
+        episodeUrl: String,
+        serverName: String,
+        quality: Int,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val res = request(iframe, ref = episodeUrl)
+        var html = res.text
+        if (isTurnstileGate(html)) {
+            // Force re-solve: interceptor clears cookie on 403; second hit after wait
+            html = request(iframe, ref = episodeUrl).text
+        }
+        if (isTurnstileGate(html)) return // still blocked — nothing to emit
+
+        val link = extractPlayerSource(html, iframe)
+        if (!link.isNullOrBlank()) {
+            emitDirectMedia(serverName, link, quality, iframe, callback)
+            return
+        }
+        // Nested iframe inside player page
+        val nested = Jsoup.parse(html).select("iframe[src]").attr("src")
+        if (nested.isNotBlank()) {
+            val abs = fixUrl(nested)
+            if (abs.contains(".mp4", true) || abs.contains(".m3u8", true)) {
+                emitDirectMedia(serverName, abs, quality, iframe, callback)
+            } else if (abs.contains("/tools/redirect/") || abs.contains("dood", true)) {
+                val id = abs.substringAfter("id=").substringBefore("&").ifBlank {
+                    Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(abs)?.groupValues?.getOrNull(1).orEmpty()
+                }
+                if (id.isNotBlank()) {
+                    resolveDodoRedirect(id, serverName, quality, mainUrl, { }, callback)
+                } else {
+                    loadFixedExtractor(abs, serverName, quality, mainUrl, { }, callback)
+                }
+            } else {
+                // recurse one level with CF
+                val inner = request(abs, ref = iframe)
+                val innerLink = extractPlayerSource(inner.text, abs)
+                if (!innerLink.isNullOrBlank()) {
+                    emitDirectMedia(serverName, innerLink, quality, abs, callback)
+                }
+            }
+        }
+    }
+
+    private fun extractPlayerSource(html: String, base: String): String? {
+        val doc = Jsoup.parse(html)
+        doc.select("source[src], video[src], video source").forEach { el ->
+            val s = el.attr("src").ifBlank { el.attr("data-src") }
+            if (s.isNotBlank()) return s
+        }
+        // JS template: = `... <source src="...">`
+        val fromTpl = Jsoup.parse(
+            html.substringAfter("= `", "").substringBefore("`;", "")
+        ).select("source").lastOrNull()?.attr("src")
+        if (!fromTpl.isNullOrBlank()) return fromTpl
+
+        Regex(
+            """["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""",
+            RegexOption.IGNORE_CASE,
+        ).find(html)?.groupValues?.getOrNull(1)?.let { return it }
+
+        Regex(
+            """src\s*[:=]\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""",
+            RegexOption.IGNORE_CASE,
+        ).find(html)?.groupValues?.getOrNull(1)?.let { return it }
+
+        Regex(
+            """file\s*[:=]\s*["'](https?://[^"']+)["']""",
+            RegexOption.IGNORE_CASE,
+        ).find(html)?.groupValues?.getOrNull(1)?.let { return it }
+
+        return null
+    }
+
+    private suspend fun parseInnerPlayer(
+        res: com.lagradost.nicehttp.NiceResponse,
+        iframe: String,
+        serverName: String,
+        quality: Int,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val inner = res.document.select("iframe[src], source[src], video[src]")
+            .firstOrNull()
+            ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+            .orEmpty()
+        if (inner.isBlank()) {
+            extractPlayerSource(res.text, iframe)?.let {
+                emitDirectMedia(serverName, it, quality, iframe, callback)
+            }
+            return
+        }
+        val abs = fixUrl(inner)
+        if (abs.contains(".mp4", true) || abs.contains(".m3u8", true)) {
+            emitDirectMedia(serverName, abs, quality, iframe, callback)
+        } else {
+            loadFixedExtractor(abs, serverName, quality, referer, subtitleCallback, callback)
+        }
+    }
+
+    /** Dodo (Dood) multi-host after AnimeSail redirect id= */
+    private suspend fun resolveDodoRedirect(
+        id: String,
+        serverName: String,
+        quality: Int?,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val hosts = listOf(
+            "https://rasa-cintaku-semakin-berantai.xyz/e/$id",
+            "https://rasa-cintaku-semakin-berantai.xyz/v/$id",
+            "https://dood.watch/e/$id",
+            "https://dood.ws/e/$id",
+            "https://dood.li/e/$id",
+            "https://dood.so/e/$id",
+            "https://dood.to/e/$id",
+            "https://dood.la/e/$id",
+            "https://d000d.com/e/$id",
+            "https://ds2play.com/e/$id",
+            "https://doply.net/e/$id",
+            "https://vide0.net/e/$id",
+            "https://myvidplay.com/e/$id",
+        )
+        val label = if (serverName.contains("dodo", true) || serverName.contains("dood", true)) {
+            "Dodo"
+        } else {
+            serverName
+        }
+        hosts.forEach { link ->
+            loadFixedExtractor(link, label, quality, referer, subtitleCallback, callback)
+        }
     }
 
     private suspend fun loadFixedExtractor(
@@ -467,6 +621,48 @@ class AnimeSailProvider : MainAPI() {
                 }
             }
         }
+
+        // Dodo / Dood host hop
+        if (fixed.contains("dood", true) || fixed.contains("doply", true) ||
+            fixed.contains("vide0", true) || fixed.contains("ds2play", true) ||
+            fixed.contains("d000d", true) || fixed.contains("rasa-cintaku", true) ||
+            fixed.contains("myvidplay", true) || serverName.contains("dodo", true)
+        ) {
+            val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
+            if (id != null) {
+                listOf(
+                    "https://dood.watch/e/$id",
+                    "https://dood.ws/e/$id",
+                    "https://dood.li/e/$id",
+                    "https://rasa-cintaku-semakin-berantai.xyz/e/$id",
+                    "https://myvidplay.com/e/$id",
+                ).forEach { alt ->
+                    if (!alt.equals(fixed, true)) {
+                        loadExtractor(alt, ref, subtitleCallback) { link ->
+                            runBlocking {
+                                val merged = LinkedHashMap<String, String>()
+                                merged.putAll(baseHeaders)
+                                merged.putAll(link.headers)
+                                callback.invoke(
+                                    newExtractorLink(
+                                        source = "Dodo",
+                                        name = "Dodo",
+                                        url = link.url,
+                                        type = link.type
+                                    ) {
+                                        this.referer = link.referer.ifBlank { ref }
+                                        this.quality = quality?.takeIf { it > 0 } ?: link.quality
+                                        this.headers = merged
+                                        this.extractorData = link.extractorData
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
     }
 
     private fun getIndexQuality(str: String): Int {

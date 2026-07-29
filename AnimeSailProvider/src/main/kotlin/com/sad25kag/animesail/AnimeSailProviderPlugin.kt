@@ -9,7 +9,7 @@ class AnimeSailProviderPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(AnimeSailProvider())
 
-        // Must register — otherwise only built-in hosts (e.g. Kraken) appear
+        // Host extractors — without these only built-ins (e.g. some Kraken) show up
         registerExtractorAPI(MixDropBz())
         registerExtractorAPI(MixDropAg())
         registerExtractorAPI(MixDropTo())
@@ -19,5 +19,12 @@ class AnimeSailProviderPlugin : Plugin() {
         registerExtractorAPI(Mp4UploadOrg())
         registerExtractorAPI(Pixeldrain())
         registerExtractorAPI(Krakenfiles())
+
+        // Dodo = Doodstream family (AnimeSail redirect host)
+        registerExtractorAPI(DoodStreamSail())
+        registerExtractorAPI(DoodWatch())
+        registerExtractorAPI(DoodWs())
+        registerExtractorAPI(DoodLi())
+        registerExtractorAPI(DoodRasa())
     }
 }
