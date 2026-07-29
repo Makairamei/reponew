@@ -2,14 +2,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnichinMoe.cs3",
         "status": 1,
-        "version": 51,
+        "version": 52,
         "name": "AnichinMoe",
         "internalName": "AnichinMoe",
         "authors": [
             "sad25kag"
         ],
-        "description": "Anichin Moe \u2014 multi-Q Rumble + all hosts parallel",
-        "fileSize": 97380,
+        "description": "Anichin Moe \u2014 DM first, Rumble\u22641080, no Turbo1080",
+        "fileSize": 101420,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://anichin.club&size=%size%",
         "apiVersion": 1,
-        "fileHash": "sha256-aac3187585131c8468b4c27cc5199c66c391cfeee2af984b5c046088394cb5eb"
+        "fileHash": "sha256-a1e1e509928fe5d75a05059c9ad963df5fc3e106e3c10285909be756d6dc897d"
     }
 ]
