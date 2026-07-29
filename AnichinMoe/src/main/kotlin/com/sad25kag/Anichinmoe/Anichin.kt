@@ -163,22 +163,40 @@ class Anichin : MainAPI() {
 
         fun addCandidate(value: String?, label: String = "Anichin") {
             if (value.isNullOrBlank()) return
+            val cleanLabel = cleanServerLabel(label)
             decodeServerUrls(value).forEach { candidate ->
-                candidates.add(candidate to label)
+                candidates.add(candidate to cleanLabel)
             }
         }
 
-        document.select("#pembed iframe[src], .player-embed iframe[src], .video-content iframe[src], iframe[src], embed[src], source[src], video[src]").forEach { element ->
-            addCandidate(element.attr("abs:src").ifBlank { element.attr("src") }, "Anichin")
-        }
-
+        // Mirror <option> first — these are the real named servers (OK.ru, Streamruby, …)
         document.select(".mobius option[value], select.mirror option[value], select option[value], option[value]").forEach { server ->
             val label = server.text().trim().ifBlank { "Anichin" }
             addCandidate(server.attr("value"), label)
         }
 
+        // Default iframe only if not already covered by a mirror option (avoids extra "Anichin N" junk)
+        val knownUrls = candidates.map { it.first }.toHashSet()
+        document.select("#pembed iframe[src], .player-embed iframe[src], .video-content iframe[src], iframe[src]").forEach { element ->
+            val src = element.attr("abs:src").ifBlank { element.attr("src") }
+            val norm = normalizeAnyUrl(src, episodeUrl) ?: return@forEach
+            if (knownUrls.any { it.contains(norm.substringAfter("://").take(40), true) || norm.contains(it.substringAfter("://").take(40), true) }) {
+                return@forEach
+            }
+            // Label from host, never bare "Anichin"
+            val hostLabel = when {
+                norm.contains("anichin-player", true) && norm.contains("ok=", true) -> "OK.ru"
+                norm.contains("anichin-player", true) && norm.contains("url=", true) -> "Dailymotion"
+                norm.contains("ok.ru", true) -> "OK.ru"
+                norm.contains("dailymotion", true) -> "Dailymotion"
+                else -> cleanServerLabel(URI(norm).host?.substringBefore(".")?.replaceFirstChar { it.uppercase() } ?: "Player")
+            }
+            addCandidate(src, hostLabel)
+            knownUrls.add(norm)
+        }
+
         document.select("[data-src], [data-lazy-src], [data-url], [data-link], [data-video], [data-embed], [data-player], [data-file]").forEach { element ->
-            val label = element.text().trim().ifBlank { "Anichin" }
+            val label = element.text().trim().ifBlank { "Player" }
             addCandidate(element.attr("data-src"), label)
             addCandidate(element.attr("data-lazy-src"), label)
             addCandidate(element.attr("data-url"), label)
@@ -189,7 +207,20 @@ class Anichin : MainAPI() {
             addCandidate(element.attr("data-file"), label)
         }
 
-        extractKnownVideoUrls(document.html()).forEach { candidates.add(it to "Anichin") }
+        // Do NOT dump every random URL as bare "Anichin" — only known hosts, labeled by host
+        extractKnownVideoUrls(document.html()).forEach { raw ->
+            val host = runCatching { URI(raw).host }.getOrNull().orEmpty()
+            val label = when {
+                host.contains("ok.ru") -> "OK.ru"
+                host.contains("dailymotion") -> "Dailymotion"
+                host.contains("rubyvidhub") || host.contains("streamruby") -> "StreamRuby"
+                host.contains("rumble") -> "Rumble"
+                host.contains("morencius") || host.contains("earnvids") -> "Vidhide"
+                host.contains("turbovid") -> "TurboVIP"
+                else -> cleanServerLabel(host.substringBefore(".").ifBlank { "Player" })
+            }
+            candidates.add(raw to label)
+        }
 
         val countedCallback: (ExtractorLink) -> Unit = { link ->
             if (emitted.add(link.url)) callback(link)
@@ -279,26 +310,33 @@ class Anichin : MainAPI() {
             else -> qualityFromUrl(fixed)
         }
 
+        val sourceName = cleanServerLabel(label)
         when {
             fixed.contains(".m3u8", true) -> {
-                M3u8Helper.generateM3u8(
-                    source = label.ifBlank { "Anichin" },
+                emitHlsVariants(
+                    source = sourceName,
                     streamUrl = fixed,
                     referer = referer,
-                    headers = mapOf("User-Agent" to USER_AGENT, "Referer" to referer),
-                ).forEach(callback)
+                    callback = callback,
+                    headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to referer,
+                        "Accept" to "*/*",
+                    ),
+                )
                 return
             }
             fixed.contains(".mp4", true) || fixed.contains(".webm", true) -> {
+                val q = normalizePlayQuality(directQuality)
                 callback(
                     newExtractorLink(
-                        source = label.ifBlank { "Anichin" },
-                        name = label.ifBlank { "Anichin" },
+                        source = sourceName,
+                        name = "$sourceName ${qualityLabel(q)}",
                         url = fixed,
                         type = ExtractorLinkType.VIDEO,
                     ) {
                         this.referer = referer
-                        this.quality = directQuality
+                        this.quality = q
                         this.headers = mapOf("User-Agent" to USER_AGENT, "Referer" to referer)
                     }
                 )
@@ -630,9 +668,17 @@ class Anichin : MainAPI() {
     }
 
     private fun qualityFromUrl(url: String): Int {
+        // Prefer explicit resolution in path/query; map 818-class to 1080
+        val height = Regex("""(?:x|h|=)(\d{3,4})(?:p|[^0-9]|$)""", RegexOption.IGNORE_CASE)
+            .findAll(url)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .filter { it in 144..2160 }
+            .maxOrNull()
+        if (height != null) return normalizePlayQuality(height)
+
         return when {
             url.contains("2160", true) || url.contains("4k", true) -> Qualities.P2160.value
-            url.contains("1080", true) -> Qualities.P1080.value
+            url.contains("1080", true) || url.contains("818", true) -> Qualities.P1080.value
             url.contains("720", true) -> Qualities.P720.value
             url.contains("480", true) -> Qualities.P480.value
             url.contains("360", true) -> Qualities.P360.value

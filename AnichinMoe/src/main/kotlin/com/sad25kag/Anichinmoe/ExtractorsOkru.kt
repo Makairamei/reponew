@@ -60,78 +60,77 @@ open class Odnoklassniki : ExtractorApi() {
 
         val hlsManifest = extractOkRuField(videoReq, "hlsManifestUrl")
         if (!hlsManifest.isNullOrBlank()) {
-            val hlsLinks = runCatching {
-                M3u8Helper.generateM3u8(
+            // Multi-quality HLS first (highest first, 818→1080 remap)
+            runCatching {
+                emitHlsVariants(
                     source = this.name,
                     streamUrl = hlsManifest,
                     referer = embedUrl,
+                    callback = callback,
                     headers = mediaHeaders,
                 )
-            }.getOrElse { error ->
+            }.onFailure { error ->
                 Log.w("AnichinOkRu", "Failed to resolve OK.ru HLS manifest", error)
-                emptyList()
-            }
-
-            if (hlsLinks.isNotEmpty()) {
-                // Multi-quality HLS first (often includes 1080p full)
-                hlsLinks.forEach(callback)
             }
         }
 
-        // Always also try progressive MP4 ladder (mobile/lowest/low/sd/hd/full)
-        // so UI shows discrete 144–1080 options even if HLS parse fails.
-
-        val metadataWebm = extractOkRuField(videoReq, "metadataWebmUrl")
-        if (!metadataWebm.isNullOrBlank()) {
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = this.name,
-                    url = metadataWebm,
-                    type = INFER_TYPE,
-                ) {
-                    this.referer = embedUrl
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mediaHeaders
-                }
-            )
-        }
-
+        // Progressive MP4 ladder (mobile/lowest/low/sd/hd/full) — highest first
         val videosStr = Regex(""""videos"\s*:\s*(\[[^\]]*])""")
             .find(videoReq)
             ?.groupValues
             ?.getOrNull(1)
 
         val videos = videosStr?.let { parseOkRuVideos(it) }.orEmpty()
-        if (videos.isEmpty() && hlsManifest.isNullOrBlank() && metadataWebm.isNullOrBlank()) {
+        if (videos.isEmpty() && hlsManifest.isNullOrBlank()) {
+            val metadataWebm = extractOkRuField(videoReq, "metadataWebmUrl")
+            if (!metadataWebm.isNullOrBlank()) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "${this.name} Auto",
+                        url = metadataWebm,
+                        type = INFER_TYPE,
+                    ) {
+                        this.referer = embedUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mediaHeaders
+                    }
+                )
+                return
+            }
             throw ErrorLoadingException("Video not found")
         }
 
-        videos.forEach { video ->
-            val videoUrl = if (video.url.startsWith("//")) "https:${video.url}" else video.url
-            val quality = video.name.uppercase()
-                .replace("MOBILE", "144p")
-                .replace("LOWEST", "240p")
-                .replace("LOW", "360p")
-                .replace("SD", "480p")
-                .replace("HD", "720p")
-                .replace("FULL", "1080p")
-                .replace("QUAD", "1440p")
-                .replace("ULTRA", "4k")
-
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = this.name,
-                    url = videoUrl,
-                    type = INFER_TYPE,
-                ) {
-                    this.referer = embedUrl
-                    this.quality = getQualityFromName(quality)
-                    this.headers = mediaHeaders
-                }
-            )
-        }
+        videos
+            .map { video ->
+                val videoUrl = if (video.url.startsWith("//")) "https:${video.url}" else video.url
+                val qualityName = video.name.uppercase()
+                    .replace("MOBILE", "144p")
+                    .replace("LOWEST", "240p")
+                    .replace("LOW", "360p")
+                    .replace("SD", "480p")
+                    .replace("HD", "720p")
+                    .replace("FULL", "1080p")
+                    .replace("QUAD", "1440p")
+                    .replace("ULTRA", "4k")
+                val q = normalizePlayQuality(getQualityFromName(qualityName))
+                Triple(q, videoUrl, qualityLabel(q))
+            }
+            .sortedByDescending { it.first }
+            .forEach { (q, videoUrl, label) ->
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "${this.name} $label",
+                        url = videoUrl,
+                        type = INFER_TYPE,
+                    ) {
+                        this.referer = embedUrl
+                        this.quality = q
+                        this.headers = mediaHeaders
+                    }
+                )
+            }
     }
 
     private fun normalizeEmbedUrl(url: String): String {

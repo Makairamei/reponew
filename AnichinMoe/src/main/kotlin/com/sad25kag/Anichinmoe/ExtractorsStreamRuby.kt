@@ -5,14 +5,12 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.getPacked
 
 /**
- * StreamRuby / rubyvidhub family.
- * Master playlist has multi-quality variants (360/480/720/~1080).
- * Always expand with generateM3u8 so CloudStream lists every rung.
+ * StreamRuby / rubyvidhub — multi-quality HLS.
+ * Top rung is often 1920x818 → remapped to 1080p and listed first.
  */
 open class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
@@ -42,7 +40,7 @@ open class StreamRuby : ExtractorApi() {
                 ),
                 referer = embedReferer,
                 headers = mapOf(
-                    "User-Agent" to USER_AGENT,
+                    "User-Agent" to ANICHIN_UA,
                     "Referer" to embedReferer,
                     "Origin" to mainUrl,
                 ),
@@ -65,9 +63,7 @@ open class StreamRuby : ExtractorApi() {
                 .map { it.value.replace("\\/", "/") }
                 .forEach { m3u8Candidates.add(it) }
 
-            Regex(
-                """file:\s*"([^"]+\.m3u8[^"]*)""""
-            ).findAll(text)
+            Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").findAll(text)
                 .map { it.groupValues[1].replace("\\/", "/") }
                 .forEach { m3u8Candidates.add(it) }
         }
@@ -82,7 +78,7 @@ open class StreamRuby : ExtractorApi() {
 
         if (m3u8Candidates.isEmpty()) {
             val page = runCatching {
-                app.get(url, referer = embedReferer, headers = mapOf("User-Agent" to USER_AGENT)).text
+                app.get(url, referer = embedReferer, headers = mapOf("User-Agent" to ANICHIN_UA)).text
             }.getOrNull().orEmpty()
             val unpacked = runCatching {
                 if (!getPacked(page).isNullOrEmpty()) getAndUnpack(page) else page
@@ -91,24 +87,19 @@ open class StreamRuby : ExtractorApi() {
         }
 
         m3u8Candidates.forEach { streamUrl ->
-            runCatching {
-                M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = streamUrl,
-                    referer = mainUrl,
-                    headers = mapOf(
-                        "User-Agent" to USER_AGENT,
-                        "Referer" to mainUrl,
-                        "Origin" to mainUrl,
-                    ),
-                ).forEach(callback)
-            }
+            emitHlsVariants(
+                source = name,
+                streamUrl = streamUrl,
+                referer = mainUrl,
+                callback = callback,
+                headers = mapOf(
+                    "User-Agent" to ANICHIN_UA,
+                    "Referer" to mainUrl,
+                    "Origin" to mainUrl,
+                    "Accept" to "*/*",
+                ),
+            )
         }
-    }
-
-    companion object {
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 }
 

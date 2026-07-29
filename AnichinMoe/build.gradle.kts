@@ -1,7 +1,7 @@
-version = 46
+version = 47
 
 cloudstream {
-    description = "Anichin Moe — multi-server + multi-quality HLS"
+    description = "Anichin Moe — playable servers, 1080-first quality"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

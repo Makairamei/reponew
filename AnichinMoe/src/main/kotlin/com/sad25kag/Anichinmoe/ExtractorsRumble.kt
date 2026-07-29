@@ -5,10 +5,14 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import org.json.JSONObject
 
+/**
+ * Rumble embed. Uses embedJS API (page scrape often times out / geo-blocked).
+ * Qualities come from ua/mp4 maps when present.
+ */
 class Rumble : ExtractorApi() {
     override var name = "Rumble"
     override var mainUrl = "https://rumble.com"
@@ -20,68 +24,106 @@ class Rumble : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val response = runCatching {
-            app.get(url, referer = referer ?: "$mainUrl/")
-        }.getOrNull() ?: return
+        val embedId = Regex("""/(?:embed|v)/([a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE)
+            .find(url)?.groupValues?.getOrNull(1)
+            ?: return
 
-        val body = response.text
-        val candidates = linkedSetOf<String>()
+        val apis = listOf(
+            "$mainUrl/embedJS/u3/?request=video&v=$embedId",
+            "$mainUrl/embedJS/?request=video&v=$embedId",
+        )
 
-        Regex(""""(?:url|hls|ua)"\s*:\s*"(https?://[^"]+)"""")
-            .findAll(body)
-            .map { it.groupValues[1].replace("\\/", "/") }
-            .forEach { candidates.add(it) }
-
-        Regex("""https?://[^\s"'<>]+rumble[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
-            .findAll(body)
-            .map { it.value.replace("\\/", "/") }
-            .forEach { candidates.add(it) }
-
-        Regex("""https?://[^\s"'<>]+rumble[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE)
-            .findAll(body)
-            .map { it.value.replace("\\/", "/") }
-            .forEach { candidates.add(it) }
-
-        val scriptData = response.document.selectFirst("script:containsData(mp4)")?.data()
-            ?.substringAfter("{\"mp4")?.substringBefore("\"evt\":{")
-        if (!scriptData.isNullOrBlank()) {
-            Regex(""""url":"([^"]+)"""")
-                .findAll(scriptData)
-                .map { it.groupValues[1].replace("\\/", "/") }
-                .forEach { candidates.add(it) }
+        var body: String? = null
+        for (api in apis) {
+            body = runCatching {
+                app.get(
+                    api,
+                    referer = url,
+                    headers = mapOf(
+                        "User-Agent" to ANICHIN_UA,
+                        "Accept" to "*/*",
+                        "Referer" to url,
+                    ),
+                ).text
+            }.getOrNull()
+            if (!body.isNullOrBlank() && body!!.contains("{")) break
         }
 
-        for (stream in candidates) {
-            when {
-                stream.contains(".m3u8", true) -> {
-                    runCatching {
-                        M3u8Helper.generateM3u8(
-                            source = name,
-                            streamUrl = stream,
-                            referer = mainUrl,
-                        ).forEach(callback)
-                    }.onFailure {
-                        callback.invoke(
-                            newExtractorLink(name, name, stream, ExtractorLinkType.M3U8)
+        if (body.isNullOrBlank()) {
+            // Last resort: embed HTML
+            body = runCatching {
+                app.get(url, referer = referer ?: "$mainUrl/", headers = mapOf("User-Agent" to ANICHIN_UA)).text
+            }.getOrNull()
+        }
+        if (body.isNullOrBlank()) return
+
+        val jsonText = body.let { raw ->
+            val start = raw.indexOf('{')
+            val end = raw.lastIndexOf('}')
+            if (start >= 0 && end > start) raw.substring(start, end + 1) else raw
+        }
+
+        val candidates = linkedMapOf<Int, String>() // quality -> url
+
+        runCatching {
+            val json = JSONObject(jsonText)
+            // ua: {"360":{"url":"..."}, "720":{"url":"..."}} or similar
+            listOf("ua", "mp4").forEach { key ->
+                val obj = json.optJSONObject(key) ?: return@forEach
+                obj.keys().forEach { qKey ->
+                    val entry = obj.opt(qKey)
+                    val stream = when (entry) {
+                        is JSONObject -> entry.optString("url").ifBlank { entry.optString("file") }
+                        is String -> entry
+                        else -> ""
+                    }.replace("\\/", "/")
+                    if (stream.startsWith("http")) {
+                        val q = qKey.filter { it.isDigit() }.toIntOrNull()
+                            ?: Regex("""(\d{3,4})""").find(stream)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                            ?: 0
+                        candidates[normalizePlayQuality(q)] = stream
+                    }
+                }
+            }
+            json.optString("hls_url").ifBlank { json.optString("hls") }
+                .replace("\\/", "/")
+                .takeIf { it.startsWith("http") }
+                ?.let { candidates[Qualities.Unknown.value] = it }
+        }
+
+        // Regex fallback
+        Regex(""""(?:url|file|hls_url|hls)"\s*:\s*"(https?://[^"]+)"""")
+            .findAll(body)
+            .map { it.groupValues[1].replace("\\/", "/") }
+            .forEach { stream ->
+                val q = Regex("""(\d{3,4})p?""").find(stream)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                candidates.putIfAbsent(normalizePlayQuality(q), stream)
+            }
+
+        if (candidates.isEmpty()) return
+
+        candidates.entries
+            .sortedByDescending { it.key }
+            .forEach { (q, stream) ->
+                when {
+                    stream.contains(".m3u8", true) -> {
+                        emitHlsVariants(name, stream, mainUrl, callback)
+                    }
+                    else -> {
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name ${qualityLabel(q)}",
+                                url = stream,
+                                type = ExtractorLinkType.VIDEO,
+                            ) {
+                                this.quality = if (q > 0) q else Qualities.Unknown.value
+                                this.referer = mainUrl
+                                this.headers = mapOf("User-Agent" to ANICHIN_UA, "Referer" to mainUrl)
+                            }
                         )
                     }
                 }
-                stream.contains(".mp4", true) -> {
-                    val quality = when {
-                        stream.contains("1080") -> Qualities.P1080.value
-                        stream.contains("720") -> Qualities.P720.value
-                        stream.contains("480") -> Qualities.P480.value
-                        stream.contains("360") -> Qualities.P360.value
-                        else -> Qualities.Unknown.value
-                    }
-                    callback.invoke(
-                        newExtractorLink(name, name, stream, ExtractorLinkType.VIDEO) {
-                            this.quality = quality
-                            this.referer = mainUrl
-                        }
-                    )
-                }
             }
-        }
     }
 }
