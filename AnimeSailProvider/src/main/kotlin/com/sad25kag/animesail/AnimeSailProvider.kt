@@ -577,43 +577,43 @@ class AnimeSailProvider : MainAPI() {
             "Accept" to "*/*",
         )
 
-        // Pixel: raw /api/file/{id} ONLY — never /u/ HTML, never ?download (attachment → "buka tab baru")
-                    run {
-                        val pixId = Pixeldrain.extractPixelId(fixed)
-                            ?: if (fixed.contains("pixeldrain", true) || serverName.contains("pixel", true)) {
-                                fixed.trimEnd('/').substringAfterLast('/').takeIf {
-                                    it.matches(Regex("""[A-Za-z0-9_-]{6,40}"""))
-                                }
-                            } else null
-                        if (!pixId.isNullOrBlank()) {
-                            val direct = Pixeldrain.streamUrl(pixId)
-                            val page = Pixeldrain.pageUrl(pixId)
-                            val qFromName = when {
-                                fixed.contains("1080", true) || serverName.contains("1080") -> Qualities.P1080.value
-                                fixed.contains("720", true) -> Qualities.P720.value
-                                quality != null && quality > 0 -> quality
-                                else -> Qualities.Unknown.value
-                            }
-                            callback(
-                                newExtractorLink(
-                                    source = "Pixel",
-                                    name = "Pixel",
-                                    url = direct,
-                                    type = ExtractorLinkType.VIDEO,
-                                ) {
-                                    this.referer = page
-                                    this.quality = qFromName
-                                    this.headers = mapOf(
-                                        "User-Agent" to baseHeaders.getValue("User-Agent"),
-                                        "Referer" to page,
-                                        "Origin" to "https://pixeldrain.com",
-                                        "Accept" to "*/*",
-                                    )
-                                }
-                            )
-                            return
-                        }
+        // Pixel: raw /api/file/{id} ONLY — never /u/ HTML, never ?download
+        run {
+            val pixId = Pixeldrain.extractPixelId(fixed)
+                ?: if (fixed.contains("pixeldrain", true) || serverName.contains("pixel", true)) {
+                    fixed.trimEnd('/').substringAfterLast('/').takeIf {
+                        it.matches(Regex("""[A-Za-z0-9_-]{6,40}"""))
                     }
+                } else null
+            if (!pixId.isNullOrBlank()) {
+                val direct = Pixeldrain.streamUrl(pixId)
+                val page = Pixeldrain.pageUrl(pixId)
+                val qFromName = when {
+                    fixed.contains("1080", true) || serverName.contains("1080") -> Qualities.P1080.value
+                    fixed.contains("720", true) -> Qualities.P720.value
+                    quality != null && quality > 0 -> quality
+                    else -> Qualities.Unknown.value
+                }
+                callback(
+                    newExtractorLink(
+                        source = "Pixel",
+                        name = "Pixel",
+                        url = direct,
+                        type = ExtractorLinkType.VIDEO,
+                    ) {
+                        this.referer = page
+                        this.quality = qFromName
+                        this.headers = mapOf(
+                            "User-Agent" to baseHeaders.getValue("User-Agent"),
+                            "Referer" to page,
+                            "Origin" to "https://pixeldrain.com",
+                            "Accept" to "*/*",
+                        )
+                    }
+                )
+                return
+            }
+        }
 
         if (fixed.contains(".mp4", true) || fixed.contains(".m3u8", true)) {
             // Don't stamp fake 1080 on dood CDN urls
@@ -669,42 +669,43 @@ class AnimeSailProvider : MainAPI() {
             }
         }
 
+        
         // MixDrop domain hop only
-                    if (fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true)) {
-                        val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
-                        if (id != null) {
-                            listOf(
-                                "https://m1xdrop.bz/e/$id",
-                                "https://mixdrop.ag/e/$id",
-                                "https://mixdrop.to/e/$id",
-                                "https://mixdrop.si/e/$id",
-                                "https://mixdrop.club/e/$id",
-                            ).distinct().forEach { alt ->
-                                if (!alt.equals(fixed, true)) {
-                                    loadExtractor(alt, ref, subtitleCallback) { link ->
-                                        runBlocking {
-                                            val merged = LinkedHashMap<String, String>()
-                                            merged.putAll(baseHeaders)
-                                            merged.putAll(link.headers)
-                                            callback(
-                                                newExtractorLink(
-                                                    source = "MixDrop",
-                                                    name = "MixDrop",
-                                                    url = link.url,
-                                                    type = link.type
-                                                ) {
-                                                    this.referer = link.referer.ifBlank { ref }
-                                                    this.quality = quality?.takeIf { it > 0 } ?: link.quality
-                                                    this.headers = merged
-                                                    this.extractorData = link.extractorData
-                                                }
-                                            )
-                                        }
+        if (fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true)) {
+            val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
+            if (id != null) {
+                listOf(
+                    "https://m1xdrop.bz/e/$id",
+                    "https://mixdrop.ag/e/$id",
+                    "https://mixdrop.to/e/$id",
+                    "https://mixdrop.si/e/$id",
+                    "https://mixdrop.club/e/$id",
+                ).distinct().forEach { alt ->
+                    if (!alt.equals(fixed, true)) {
+                        loadExtractor(alt, ref, subtitleCallback) { link ->
+                            runBlocking {
+                                val merged = LinkedHashMap<String, String>()
+                                merged.putAll(baseHeaders)
+                                merged.putAll(link.headers)
+                                callback(
+                                    newExtractorLink(
+                                        source = "MixDrop",
+                                        name = "MixDrop",
+                                        url = link.url,
+                                        type = link.type
+                                    ) {
+                                        this.referer = link.referer.ifBlank { ref }
+                                        this.quality = quality?.takeIf { it > 0 } ?: link.quality
+                                        this.headers = merged
+                                        this.extractorData = link.extractorData
                                     }
-                                }
+                                )
                             }
                         }
                     }
+                }
+            }
+        }
     }
 
     private fun getIndexQuality(str: String): Int {

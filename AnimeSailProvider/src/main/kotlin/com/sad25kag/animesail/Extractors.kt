@@ -241,7 +241,7 @@ class Pixeldrain : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         // Reject if already a bare non-pixel url
-        val id = extractPixelId(url) ?: return
+        val id = Companion.extractPixelId(url) ?: return
 
         val info = runCatching {
             app.get(
