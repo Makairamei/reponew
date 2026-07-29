@@ -132,6 +132,10 @@ class MixDropCom : MixDropBase() {
     override var mainUrl = "https://mixdrop.com"
 }
 
+class MixDropSi : MixDropBase() {
+    override var mainUrl = "https://mixdrop.si"
+}
+
 /** Mp4Upload */
 open class Mp4UploadFix : ExtractorApi() {
     override var name = "Mp4Upload"
@@ -218,8 +222,10 @@ class Mp4UploadOrg : Mp4UploadFix() {
 }
 
 /**
- * Pixeldrain — direct API download so Exo plays in-app
- * (without ?download / proper type CS may say "buka di tab baru").
+ * Pixeldrain — MUST emit raw media URL (`/api/file/{id}`), never `/u/{id}` HTML page.
+ * `?download` sets Content-Disposition: attachment → CloudStream often shows
+ * "Host tidak support pemutaran langsung / Buka di Tab Baru".
+ * Plain `/api/file/{id}` returns video/mp4 + Range (206) → Exo plays in-app.
  */
 class Pixeldrain : ExtractorApi() {
     override var name = "Pixel"
@@ -234,35 +240,33 @@ class Pixeldrain : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val id = Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
-            .find(url)?.groupValues?.getOrNull(1)
-            ?: url.trimEnd('/').substringAfterLast('/').takeIf { it.matches(Regex("""[A-Za-z0-9_-]{4,40}""")) }
-            ?: return
+        // Reject if already a bare non-pixel url
+        val id = extractPixelId(url) ?: return
 
-        // Prefer info API for name/size; stream is always /api/file/{id}?download
         val info = runCatching {
             app.get(
                 "https://pixeldrain.com/api/file/$id/info",
-                headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "application/json"),
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Accept" to "application/json",
+                    "Referer" to "https://pixeldrain.com/u/$id",
+                ),
             ).text
         }.getOrNull().orEmpty()
 
-        val fileName = Regex(""""name"\s*:\s*"([^"]+)"""").find(info)?.groupValues?.getOrNull(1)
-        val isVideo = fileName.isNullOrBlank() ||
-            fileName.contains(".mp4", true) ||
-            fileName.contains(".mkv", true) ||
-            fileName.contains(".webm", true) ||
-            fileName.contains(".m3u8", true) ||
-            info.contains("\"mime_type\":\"video", true) ||
-            info.contains("video/", true)
-
-        // Always emit direct binary URL — CS needs VIDEO type + download endpoint
-        val direct = "https://pixeldrain.com/api/file/$id?download"
-        val page = "https://pixeldrain.com/u/$id"
-
-        if (!isVideo && info.isNotBlank() && info.contains("mime_type") && !info.contains("video")) {
-            // Still try — some entries mis-report; user asked for direct play
+        val fileName = Regex(""""name"\s*:\s*"([^"]+)"""").find(info)?.groupValues?.getOrNull(1).orEmpty()
+        val quality = when {
+            fileName.contains("2160", true) || fileName.contains("4k", true) -> Qualities.P2160.value
+            fileName.contains("1440", true) -> Qualities.P1440.value
+            fileName.contains("1080", true) -> Qualities.P1080.value
+            fileName.contains("720", true) -> Qualities.P720.value
+            fileName.contains("480", true) -> Qualities.P480.value
+            else -> Qualities.Unknown.value
         }
+
+        // Stream URL — NO ?download (attachment breaks in-app player)
+        val direct = "https://pixeldrain.com/api/file/$id"
+        val page = "https://pixeldrain.com/u/$id"
 
         callback(
             newExtractorLink(
@@ -272,18 +276,37 @@ class Pixeldrain : ExtractorApi() {
                 type = ExtractorLinkType.VIDEO,
             ) {
                 this.referer = page
-                this.quality = Qualities.Unknown.value
+                this.quality = quality
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
                     "Referer" to page,
-                    "Origin" to mainUrl,
+                    "Origin" to "https://pixeldrain.com",
                     "Accept" to "*/*",
-                    // Helps some CDNs treat as media fetch
-                    "Accept-Encoding" to "identity",
                 )
             }
         )
     }
+
+    companion object {
+        fun extractPixelId(url: String): String? {
+            return Regex("""pixeldrain\.com/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
+                .find(url)?.groupValues?.getOrNull(1)
+                ?: Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
+                    .find(url)?.groupValues?.getOrNull(1)
+                    ?.takeIf { url.contains("pixel", true) }
+                ?: url.trimEnd('/').substringAfterLast('/')
+                    .takeIf { it.matches(Regex("""[A-Za-z0-9_-]{6,40}""")) && !it.contains('.') }
+                    ?.takeIf { url.contains("pixeldrain", true) || url.contains("/u/", true) }
+        }
+
+        /** Build in-app playable link (shared by provider loadLinks). */
+        fun streamUrl(id: String): String = "https://pixeldrain.com/api/file/$id"
+        fun pageUrl(id: String): String = "https://pixeldrain.com/u/$id"
+    }
+}
+
+class PixeldrainTo : Pixeldrain() {
+    override var mainUrl = "https://pixeldrain.to"
 }
 
 /** Krakenfiles */

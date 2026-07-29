@@ -9,16 +9,18 @@ class AnimeSailProviderPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(AnimeSailProvider())
 
-        // One extractor per host family — extra dood clones caused 8× "Dodo 1080p"
+        // Host extractors
         registerExtractorAPI(MixDropBz())
         registerExtractorAPI(MixDropAg())
         registerExtractorAPI(MixDropTo())
         registerExtractorAPI(MixDropClub())
         registerExtractorAPI(MixDropCom())
+        registerExtractorAPI(MixDropSi())
         registerExtractorAPI(Mp4UploadFix())
         registerExtractorAPI(Mp4UploadOrg())
         registerExtractorAPI(Pixeldrain())
+        registerExtractorAPI(PixeldrainTo())
         registerExtractorAPI(Krakenfiles())
-        registerExtractorAPI(DoodStreamSail()) // Dodo — single class only
+        registerExtractorAPI(DoodStreamSail()) // Dodo — single
     }
 }
