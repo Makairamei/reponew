@@ -227,7 +227,7 @@ class Mp4UploadOrg : Mp4UploadFix() {
  * "Host tidak support pemutaran langsung / Buka di Tab Baru".
  * Plain `/api/file/{id}` returns video/mp4 + Range (206) → Exo plays in-app.
  */
-class Pixeldrain : ExtractorApi() {
+open class Pixeldrain : ExtractorApi() {
     override var name = "Pixel"
     override var mainUrl = "https://pixeldrain.com"
     override val requiresReferer = false
