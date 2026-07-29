@@ -158,8 +158,9 @@ class Anichin : MainAPI() {
         val episodeUrl = fixUrl(data)
         val document = app.get(episodeUrl, referer = mainUrl).document
         val candidates = linkedSetOf<Pair<String, String>>()
-        val visited = linkedSetOf<String>()
-        val emitted = linkedSetOf<String>()
+        // Thread-safe: loadLinks uses parallel amap — plain LinkedHashSet races drop hosts
+        val visited = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+        val emitted = java.util.Collections.synchronizedSet(linkedSetOf<String>())
 
         fun addCandidate(value: String?, label: String = "Anichin") {
             if (value.isNullOrBlank()) return
@@ -253,9 +254,9 @@ class Anichin : MainAPI() {
             )
             .take(MAX_TOP_LEVEL_CANDIDATES)
 
-        // Sequential like Betbet/TESTINGCF — parallel amap + shared visited races
-        // caused Rumble (slow DNS) to be skipped / cancelled while other hosts finished.
-        for ((url, label) in topLevelCandidates) {
+        // Parallel resolve (amap) so slow Rumble/DNS never blocks OK.ru / StreamRuby / DM.
+        // Each host isolated with try/catch; visited/emitted are synchronized.
+        topLevelCandidates.amap { (url, label) ->
             try {
                 resolveVideoCandidate(
                     url = url,
@@ -645,18 +646,21 @@ class Anichin : MainAPI() {
 
     private fun candidatePriority(url: String, label: String): Int {
         val value = "$label $url".lowercase()
-        // Prefer reliable playable hosts first (Rumble DNS often needs early attempt)
+        // Fast direct hosts first; Rumble (DNS-heavy) last so UI fills quickly in parallel
         return when {
-            value.contains("rumble.com") || value.contains("rumble") -> 0
-            value.contains("streamruby") || value.contains("rubyvidhub") -> 1
-            value.contains("ok.ru") || value.contains("odnoklassniki.ru") || value.contains("anichin-player") -> 2
-            value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 3
-            value.contains("turbovidhls") || value.contains("turboviplay") -> 4
-            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 5
-            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 6
-            value.contains("abyssplayer") || value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 7
-            value.contains("vidguard") -> 8
-            value.contains("dood") || value.contains("playmogo") -> 9
+            value.contains("streamruby") || value.contains("rubyvidhub") -> 0
+            value.contains("ok.ru") || value.contains("odnoklassniki.ru") ||
+                (value.contains("anichin-player") && value.contains("ok=")) -> 1
+            value.contains("dailymotion") || value.contains("dai.ly") ||
+                (value.contains("anichin-player") && value.contains("url=")) -> 2
+            value.contains("turbovidhls") || value.contains("turboviplay") -> 3
+            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 4
+            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 5
+            value.contains("abyssplayer") || value.contains("newplayr") ||
+                value.contains("streamhg") || value.contains("streamwish") -> 6
+            value.contains("vidguard") -> 7
+            value.contains("dood") || value.contains("playmogo") -> 8
+            value.contains("rumble") -> 9
             value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 10
             else -> 12
         }

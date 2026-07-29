@@ -5,17 +5,22 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 /**
- * Rumble — matched to BetbetMiro-Extension AnichinMoe.cs3 (dex strings):
- * - script:containsData(mp4)
- * - substringAfter {"mp4  … substringBefore "evt":{
- * - regex "url":"(.*?)"
- * - rumble.com + .m3u8 + multi-variant master only
+ * Rumble — Betbet scrape path + multi-quality emission.
  *
- * DO NOT multi-fetch embedJS (timeouts → Rumble never shows).
+ * Betbet finds the HLS master via:
+ *   script:containsData(mp4) → {"mp4 … "evt":{ → "url":"…m3u8"
+ *
+ * We keep that discovery, then:
+ * - expand master with generateM3u8 → 360/480/720/1080 list items (like Betbet UI)
+ * - also emit progressive mp4 rungs from the same JSON blob when present
+ *
+ * Single page fetch only (no embedJS timeout loops).
  */
 class Rumble : ExtractorApi() {
     override var name = "Rumble"
@@ -33,96 +38,142 @@ class Rumble : ExtractorApi() {
             app.get(pageUrl, referer = referer ?: "$mainUrl/")
         }.getOrNull() ?: return
 
-        // --- exact Betbet path ---
+        val body = response.text
+        val headers = mapOf(
+            "User-Agent" to ANICHIN_UA,
+            "Referer" to mainUrl,
+            "Origin" to mainUrl,
+            "Accept" to "*/*",
+        )
+
+        // --- Betbet script blob ---
         val scriptData = response.document.selectFirst("script:containsData(mp4)")?.data()
             ?.substringAfter("{\"mp4")
             ?.substringBefore("\"evt\":{")
+            .orEmpty()
 
-        val processedUrls = mutableSetOf<String>()
+        val m3u8s = linkedSetOf<String>()
+        val mp4s = linkedMapOf<Int, String>() // quality -> url
 
-        if (!scriptData.isNullOrBlank()) {
-            val regex = """"url":"(.*?)"|h":(.*?)\}""".toRegex()
-            for (match in regex.findAll(scriptData)) {
-                val rawUrl = match.groupValues[1]
-                if (rawUrl.isBlank()) continue
+        fun absorbUrl(raw: String, qualityHint: String? = null) {
+            val cleaned = raw.replace("\\/", "/").trim()
+            if (!cleaned.startsWith("http")) return
+            if (isJunkStreamUrl(cleaned)) return
+            if (!cleaned.contains("rumble", true) &&
+                !cleaned.contains(".m3u8", true) &&
+                !cleaned.contains(".mp4", true)
+            ) return
 
-                val cleanedUrl = rawUrl.replace("\\/", "/")
-                if (!cleanedUrl.contains("rumble.com")) continue
-                if (!cleanedUrl.endsWith(".m3u8") && !cleanedUrl.contains(".m3u8")) continue
-                if (!processedUrls.add(cleanedUrl)) continue
-
-                val variantCount = runCatching {
-                    val m3u8Response = app.get(cleanedUrl, referer = pageUrl)
-                    "#EXT-X-STREAM-INF".toRegex().findAll(m3u8Response.text).count()
-                }.getOrDefault(0)
-
-                // Betbet: only multi-variant masters
-                if (variantCount > 1) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = this@Rumble.name,
-                            name = "Rumble",
-                            url = cleanedUrl,
-                            type = ExtractorLinkType.M3U8,
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf(
-                                "User-Agent" to ANICHIN_UA,
-                                "Referer" to mainUrl,
-                            )
-                        }
-                    )
-                    return
+            when {
+                cleaned.contains(".m3u8", true) -> m3u8s.add(cleaned)
+                cleaned.contains(".mp4", true) -> {
+                    val q = qualityHint?.let { getQualityFromName(it) }?.takeIf { it > 0 }
+                        ?: Regex("""(\d{3,4})p?""").find(cleaned)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                            ?.let { normalizePlayQuality(it) }
+                        ?: Qualities.Unknown.value
+                    // keep highest URL per quality bucket
+                    mp4s[q] = cleaned
                 }
             }
         }
 
-        // --- HTML body fallback (same single response, no extra host round-trips) ---
-        val body = response.text
-        // progressive mp4 from same script blob style
-        Regex(""""url"\s*:\s*"(https?://[^"]*rumble[^"]+\.mp4[^"]*)"""", RegexOption.IGNORE_CASE)
+        if (scriptData.isNotBlank()) {
+            // Betbet regex
+            val regex = """"url":"(.*?)"|h":(.*?)\}""".toRegex()
+            for (match in regex.findAll(scriptData)) {
+                absorbUrl(match.groupValues[1])
+            }
+            // quality-keyed maps often look like "1080":{"url":"..."} or "720":{"url":"..."}
+            Regex(""""(\d{3,4})"\s*:\s*\{[^}]*?"url"\s*:\s*"(https?://[^"]+)"""")
+                .findAll(scriptData)
+                .forEach { absorbUrl(it.groupValues[2], it.groupValues[1] + "p") }
+        }
+
+        // Full page fallbacks
+        Regex(""""(\d{3,4})"\s*:\s*\{[^}]*?"url"\s*:\s*"(https?://[^"]+)"""")
             .findAll(body)
-            .map { it.groupValues[1].replace("\\/", "/") }
-            .distinct()
-            .forEach { mp4 ->
-                val q = Regex("""(\d{3,4})""").find(mp4)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            .forEach { absorbUrl(it.groupValues[2], it.groupValues[1] + "p") }
+
+        Regex(""""url"\s*:\s*"(https?://[^"]+)"""")
+            .findAll(body)
+            .forEach { absorbUrl(it.groupValues[1]) }
+
+        Regex("""https?://[^"'\\s<>]+rumble[^"'\\s<>]+\.(?:m3u8|mp4)[^"'\\s<>]*""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .forEach { absorbUrl(it.value) }
+
+        var emitted = false
+
+        // 1) Progressive MP4 ladder (explicit qualities — matches "banyak kualitas" list)
+        mp4s.entries
+            .sortedByDescending { it.key }
+            .forEach { (q, stream) ->
                 callback(
                     newExtractorLink(
                         source = name,
-                        name = "Rumble",
-                        url = mp4,
+                        name = name,
+                        url = stream,
                         type = ExtractorLinkType.VIDEO,
                     ) {
                         this.referer = mainUrl
-                        this.quality = normalizePlayQuality(q ?: 0)
-                        this.headers = mapOf("User-Agent" to ANICHIN_UA, "Referer" to mainUrl)
+                        this.quality = if (q > 0) q else Qualities.Unknown.value
+                        this.headers = headers
                     }
                 )
+                emitted = true
             }
 
-        // any rumble m3u8 still in page
-        if (processedUrls.isEmpty()) {
-            Regex("""https?://[^"'\\s<>]+rumble[^"'\\s<>]+\.m3u8[^"'\\s<>]*""", RegexOption.IGNORE_CASE)
-                .findAll(body)
-                .map { it.value.replace("\\/", "/") }
-                .distinct()
-                .firstOrNull()
-                ?.let { m3u8 ->
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = "Rumble",
-                            url = m3u8,
-                            type = ExtractorLinkType.M3U8,
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf("User-Agent" to ANICHIN_UA, "Referer" to mainUrl)
-                        }
-                    )
-                }
+        // 2) HLS masters → expand to quality list (360/720/1080…)
+        for (master in m3u8s) {
+            val links = runCatching {
+                M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = master,
+                    referer = mainUrl,
+                    headers = headers,
+                )
+            }.getOrElse { emptyList() }
+                .filterNot { isJunkStreamUrl(it.url, it.name) }
+
+            if (links.isNotEmpty()) {
+                links
+                    .map { normalizePlayQuality(it.quality) to it }
+                    .sortedByDescending { it.first }
+                    .forEach { (q, link) ->
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = name,
+                                url = link.url,
+                                type = link.type ?: ExtractorLinkType.M3U8,
+                            ) {
+                                this.referer = link.referer.ifBlank { mainUrl }
+                                this.quality = q
+                                this.headers = if (link.headers.isNotEmpty()) link.headers else headers
+                            }
+                        )
+                        emitted = true
+                    }
+            } else {
+                // master as adaptive fallback
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = master,
+                        type = ExtractorLinkType.M3U8,
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = headers
+                    }
+                )
+                emitted = true
+            }
         }
+
+        // nothing found → silent return (don't block other hosts)
+        if (!emitted) return
     }
 
     private fun normalizeEmbed(url: String): String {
