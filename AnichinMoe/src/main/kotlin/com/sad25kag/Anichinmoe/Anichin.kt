@@ -222,11 +222,11 @@ class Anichin : MainAPI() {
             candidates.add(raw to label)
         }
 
-        val countedCallback: (ExtractorLink) -> Unit = { link ->
-            if (isJunkStreamUrl(link.url, link.name)) return@countedCallback
+        val countedCallback: (ExtractorLink) -> Unit = fun(link: ExtractorLink) {
+            if (isJunkStreamUrl(link.url, link.name)) return
             // Drop bare i1/i2/i3 style names
             val n = link.name.trim().lowercase()
-            if (n.matches(Regex("""i\d+"""))) return@countedCallback
+            if (n.matches(Regex("""i\d+"""))) return
             if (emitted.add(link.url)) callback(link)
         }
 

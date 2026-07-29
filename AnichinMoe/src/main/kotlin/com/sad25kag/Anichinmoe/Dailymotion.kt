@@ -158,9 +158,10 @@ open class Dailymotion : ExtractorApi() {
         return urls.toList()
     }
 
-    private fun emitSubtitles(json: JSONObject, subtitleCallback: (SubtitleFile) -> Unit) {
+    private suspend fun emitSubtitles(json: JSONObject, subtitleCallback: (SubtitleFile) -> Unit) {
         val subtitles = json.optJSONObject("subtitles") ?: return
-        subtitles.keys().forEach { lang ->
+        val langs = subtitles.keys().asSequence().toList()
+        for (lang in langs) {
             val value = subtitles.opt(lang)
             val entries = when (value) {
                 is JSONArray -> value
@@ -175,13 +176,13 @@ open class Dailymotion : ExtractorApi() {
                     for (urlIndex in 0 until urlsArr.length()) {
                         val subUrl = urlsArr.optString(urlIndex).trim()
                         if (subUrl.isNotBlank()) {
-                            runCatching { subtitleCallback(newSubtitleFile(label, subUrl)) }
+                            subtitleCallback(newSubtitleFile(label, subUrl))
                         }
                     }
                 } else {
                     val subUrl = item.optString("url").trim()
                     if (subUrl.isNotBlank()) {
-                        runCatching { subtitleCallback(newSubtitleFile(label, subUrl)) }
+                        subtitleCallback(newSubtitleFile(label, subUrl))
                     }
                 }
             }
@@ -211,7 +212,7 @@ open class Dailymotion : ExtractorApi() {
     }
 
     /** Single master playlist — keeps AUDIO groups (sound). */
-    private fun emitMaster(streamLink: String, videoId: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun emitMaster(streamLink: String, videoId: String, callback: (ExtractorLink) -> Unit) {
         val embedUrl = playerEmbedUrl(videoId)
         callback(
             newExtractorLink(
