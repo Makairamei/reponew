@@ -24,14 +24,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnimeSailProvider.cs3",
         "status": 1,
-        "version": 13,
+        "version": 14,
         "name": "AnimeSailProvider",
         "internalName": "AnimeSailProvider",
         "authors": [
             "sad25kag"
         ],
-        "description": "AnimeSail \u2014 CF Turnstile + MixDrop/MP4/Kraken/Pixel/Dodo headers fix v13",
-        "fileSize": 50198,
+        "description": "AnimeSail \u2014 Dodo (Dood) + Lokal CF player fix",
+        "fileSize": 63141,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -41,6 +41,6 @@
         ],
         "iconUrl": "https://aghanim.xyz/wp-content/themes/animesail/assets/images/ico.png",
         "apiVersion": 1,
-        "fileHash": "sha256-485c224f98f9ae6e7efbc8f7f7c3c2e3d5e43933069775a256031c0e576d5bfd"
+        "fileHash": "sha256-3ef812079732239c9aa9d0ac668f667ecabfc55da449c258ef63eff5fc2a800b"
     }
 ]
