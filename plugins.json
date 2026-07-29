@@ -24,14 +24,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnimeSailProvider.cs3",
         "status": 1,
-        "version": 15,
+        "version": 17,
         "name": "AnimeSailProvider",
         "internalName": "AnimeSailProvider",
         "authors": [
             "sad25kag"
         ],
-        "description": "AnimeSail \u2014 1x Dodo, Pixel direct, Lokal CF retry",
-        "fileSize": 64521,
+        "description": "AnimeSail \u2014 Pixel /api/file stream (no open-tab), MixDrop/Dodo",
+        "fileSize": 66203,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -41,6 +41,6 @@
         ],
         "iconUrl": "https://aghanim.xyz/wp-content/themes/animesail/assets/images/ico.png",
         "apiVersion": 1,
-        "fileHash": "sha256-fc4788de7a78f3cde03520908adb4b057f058b81eef018587eb72981ce227117"
+        "fileHash": "sha256-fcbde8779bcb748f19fd028c07f5b368c757d2cd151b71274efc0836908aa05a"
     }
 ]
