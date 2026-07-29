@@ -1,7 +1,7 @@
-version = 49
+version = 50
 
 cloudstream {
-    description = "Anichin Moe — DM master-only audio, Rumble DNS, full servers"
+    description = "Anichin Moe — Rumble Betbet-match, sequential servers"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

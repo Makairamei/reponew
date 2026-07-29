@@ -253,7 +253,9 @@ class Anichin : MainAPI() {
             )
             .take(MAX_TOP_LEVEL_CANDIDATES)
 
-        topLevelCandidates.amap { (url, label) ->
+        // Sequential like Betbet/TESTINGCF — parallel amap + shared visited races
+        // caused Rumble (slow DNS) to be skipped / cancelled while other hosts finished.
+        for ((url, label) in topLevelCandidates) {
             try {
                 resolveVideoCandidate(
                     url = url,
