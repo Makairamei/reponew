@@ -251,95 +251,109 @@ class AnimeSailProvider : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val document = request(data).document
-        val playerPath = "$mainUrl/utils/player/"
+            data: String,
+            isCasting: Boolean,
+            subtitleCallback: (SubtitleFile) -> Unit,
+            callback: (ExtractorLink) -> Unit
+        ): Boolean {
+            val document = request(data).document
+            val playerPath = "$mainUrl/utils/player/"
+            // Global dedupe — Dodo multi-hop used to emit 8 identical entries
+            val emittedUrls = java.util.Collections.synchronizedSet(linkedSetOf<String>())
+            val emittedKeys = java.util.Collections.synchronizedSet(linkedSetOf<String>())
 
-        document.select(".mobius > .mirror > option, .mirror option, option[data-em]").amap { element ->
-            safeApiCall {
-                val encodedData = element.attr("data-em").ifBlank { element.attr("value") }
-                if (encodedData.isBlank() || encodedData.equals("0") || encodedData.length < 8) return@safeApiCall
+            val safeCallback: (ExtractorLink) -> Unit = fun(link: ExtractorLink) {
+                val urlKey = link.url.substringBefore("?").lowercase()
+                // One stream URL = one list entry (stops Dodo x8)
+                if (!emittedUrls.add(urlKey)) return
+                val nameKey = link.source.trim().lowercase() + "|" + urlKey
+                if (!emittedKeys.add(nameKey)) return
+                callback(link)
+            }
 
-                val decodedHtml = runCatching { base64Decode(encodedData) }.getOrNull() ?: return@safeApiCall
-                val iframe = fixUrl(
-                    Jsoup.parse(decodedHtml)
-                        .select("iframe[src], embed[src], source[src], video[src]")
-                        .firstOrNull()
-                        ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-                        .orEmpty()
-                )
-                if (iframe.contains("statistic") || iframe.isBlank()) return@safeApiCall
+            document.select(".mobius > .mirror > option, .mirror option, option[data-em]").amap { element ->
+                safeApiCall {
+                    val encodedData = element.attr("data-em").ifBlank { element.attr("value") }
+                    if (encodedData.isBlank() || encodedData.equals("0") || encodedData.length < 8) return@safeApiCall
 
-                val rawText = element.text().trim()
-                val quality = getIndexQuality(rawText)
-                val serverName = cleanMirrorName(rawText)
+                    val decodedHtml = runCatching { base64Decode(encodedData) }.getOrNull() ?: return@safeApiCall
+                    val iframe = fixUrl(
+                        Jsoup.parse(decodedHtml)
+                            .select("iframe[src], embed[src], source[src], video[src]")
+                            .firstOrNull()
+                            ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+                            .orEmpty()
+                    )
+                    if (iframe.contains("statistic") || iframe.isBlank()) return@safeApiCall
 
-                when {
-                    iframe.endsWith(".mp4", true) || iframe.endsWith(".m3u8", true) ||
-                        iframe.contains(".mp4?", true) || iframe.contains(".m3u8?", true) -> {
-                        emitDirectMedia(serverName, iframe, quality, mainUrl, callback)
-                    }
+                    val rawText = element.text().trim()
+                    val mirrorQuality = getIndexQuality(rawText)
+                    val serverName = cleanMirrorName(rawText)
 
-                    iframe.contains("${playerPath}popup") || iframe.contains("popup.php") ||
-                        iframe.contains("popup?", true) -> {
-                        val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
-                        if (encodedUrl.isNotBlank()) {
-                            val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                            loadFixedExtractor(realUrl, serverName, quality, mainUrl, subtitleCallback, callback)
+                    when {
+                        iframe.endsWith(".mp4", true) || iframe.endsWith(".m3u8", true) ||
+                            iframe.contains(".mp4?", true) || iframe.contains(".m3u8?", true) -> {
+                            emitDirectMedia(serverName, iframe, mirrorQuality, mainUrl, safeCallback)
                         }
-                    }
 
-                    iframe.contains("player-kodir") || iframe.contains("${playerPath}kodir") ||
-                        iframe.contains("kodir2") -> {
-                        resolveSitePlayer(iframe, data, serverName, quality, callback)
-                    }
-
-                    iframe.contains("${playerPath}framezilla") || iframe.contains("uservideo.xyz") ||
-                        iframe.contains("framezilla") -> {
-                        val res = request(iframe, ref = data)
-                        if (isTurnstileGate(res.text)) {
-                            // Still gated — request() should have solved; retry once
-                            val retry = request(iframe, ref = data)
-                            parseInnerPlayer(retry, iframe, serverName, quality, mainUrl, subtitleCallback, callback)
-                        } else {
-                            parseInnerPlayer(res, iframe, serverName, quality, mainUrl, subtitleCallback, callback)
+                        iframe.contains("${playerPath}popup") || iframe.contains("popup.php") ||
+                            iframe.contains("popup?", true) -> {
+                            val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
+                            if (encodedUrl.isNotBlank()) {
+                                val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                                loadFixedExtractor(realUrl, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                            }
                         }
-                    }
 
-                    // Dodo path: tools/redirect → dood-like hosts
-                    iframe.contains("/tools/redirect/") || iframe.contains("aghanim.xyz/tools/redirect/") -> {
-                        val id = iframe.substringAfter("id=").substringBefore("&").trim()
-                        if (id.isNotBlank()) {
-                            resolveDodoRedirect(id, serverName, quality, mainUrl, subtitleCallback, callback)
+                        iframe.contains("player-kodir") || iframe.contains("${playerPath}kodir") ||
+                            iframe.contains("kodir2") -> {
+                            resolveSitePlayer(iframe, data, serverName, mirrorQuality, safeCallback)
                         }
-                    }
 
-                    // Lokal / Buzi / any utils/player/* page (often CF-gated HTML5 source)
-                    iframe.contains(playerPath) || iframe.contains("/utils/player") ||
-                        (iframe.contains(mainUrl) && (iframe.contains("player") || iframe.contains("embed"))) -> {
-                        resolveSitePlayer(iframe, data, serverName, quality, callback)
-                    }
+                        iframe.contains("${playerPath}framezilla") || iframe.contains("uservideo.xyz") ||
+                            iframe.contains("framezilla") -> {
+                            val res = request(iframe, ref = data)
+                            val page = if (isTurnstileGate(res.text)) request(iframe, ref = data) else res
+                            parseInnerPlayer(page, iframe, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                        }
 
-                    // Label hints for Dodo even if URL shape odd
-                    serverName.contains("dodo", true) || iframe.contains("dood", true) ||
-                        iframe.contains("doply", true) || iframe.contains("vide0", true) ||
-                        iframe.contains("rasa-cintaku", true) -> {
-                        loadFixedExtractor(iframe, "Dodo", quality, mainUrl, subtitleCallback, callback)
-                        // also try id hop
-                        val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(iframe)?.groupValues?.getOrNull(1)
-                        if (id != null) resolveDodoRedirect(id, "Dodo", quality, mainUrl, subtitleCallback, callback)
-                    }
+                        // Dodo: redirect id → resolve ONCE (no 8× spam). Ignore fake 1080 mirror label.
+                        iframe.contains("/tools/redirect/") || iframe.contains("aghanim.xyz/tools/redirect/") -> {
+                            val id = iframe.substringAfter("id=").substringBefore("&").trim()
+                            if (id.isNotBlank()) {
+                                resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
+                            }
+                        }
 
-                    else -> {
-                        loadFixedExtractor(iframe, serverName, quality, mainUrl, subtitleCallback, callback)
+                        // Pixeldrain
+                        iframe.contains("pixeldrain", true) || serverName.contains("pixel", true) -> {
+                            loadFixedExtractor(iframe, "Pixel", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
+                        }
+
+                        // Lokal / site player (CF Turnstile)
+                        iframe.contains(playerPath) || iframe.contains("/utils/player") ||
+                            (iframe.contains(mainUrl) && (iframe.contains("player") || iframe.contains("embed"))) -> {
+                            resolveSitePlayer(iframe, data, serverName, mirrorQuality, safeCallback)
+                        }
+
+                        serverName.contains("dodo", true) || iframe.contains("dood", true) ||
+                            iframe.contains("doply", true) || iframe.contains("vide0", true) ||
+                            iframe.contains("rasa-cintaku", true) -> {
+                            val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(iframe)?.groupValues?.getOrNull(1)
+                            if (id != null) {
+                                resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
+                            } else {
+                                // Single loadExtractor call — DoodStreamSail emits one link
+                                loadFixedExtractor(iframe, "Dodo", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
+                            }
+                        }
+
+                        else -> {
+                            loadFixedExtractor(iframe, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                        }
                     }
                 }
             }
-        }
         return true
     }
 
@@ -394,7 +408,7 @@ class AnimeSailProvider : MainAPI() {
         )
     }
 
-    /** Lokal / site HTML5 player — always go through Turnstile interceptor via request() */
+    /** Lokal / site HTML5 player — Turnstile via request() interceptor */
     private suspend fun resolveSitePlayer(
         iframe: String,
         episodeUrl: String,
@@ -402,40 +416,51 @@ class AnimeSailProvider : MainAPI() {
         quality: Int,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val res = request(iframe, ref = episodeUrl)
-        var html = res.text
-        if (isTurnstileGate(html)) {
-            // Force re-solve: interceptor clears cookie on 403; second hit after wait
-            html = request(iframe, ref = episodeUrl).text
+        // Warm episode cookies first (same CF jar as main page)
+        runCatching { request(episodeUrl) }
+
+        var html = ""
+        // Up to 3 attempts — WebView turnstile can need a moment
+        repeat(3) { attempt ->
+            val res = request(iframe, ref = episodeUrl)
+            html = res.text
+            if (!isTurnstileGate(html) && html.length > 500) return@repeat
+            if (attempt < 2) {
+                // brief yield so WebView interceptor can finish
+                kotlinx.coroutines.delay(1500L * (attempt + 1))
+            }
         }
-        if (isTurnstileGate(html)) return // still blocked — nothing to emit
+        if (isTurnstileGate(html) || html.length < 200) return
 
         val link = extractPlayerSource(html, iframe)
         if (!link.isNullOrBlank()) {
             emitDirectMedia(serverName, link, quality, iframe, callback)
             return
         }
-        // Nested iframe inside player page
         val nested = Jsoup.parse(html).select("iframe[src]").attr("src")
         if (nested.isNotBlank()) {
             val abs = fixUrl(nested)
-            if (abs.contains(".mp4", true) || abs.contains(".m3u8", true)) {
-                emitDirectMedia(serverName, abs, quality, iframe, callback)
-            } else if (abs.contains("/tools/redirect/") || abs.contains("dood", true)) {
-                val id = abs.substringAfter("id=").substringBefore("&").ifBlank {
-                    Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(abs)?.groupValues?.getOrNull(1).orEmpty()
+            when {
+                abs.contains(".mp4", true) || abs.contains(".m3u8", true) ->
+                    emitDirectMedia(serverName, abs, quality, iframe, callback)
+                abs.contains("/tools/redirect/") || abs.contains("dood", true) || abs.contains("rasa-cintaku", true) -> {
+                    val id = abs.substringAfter("id=").substringBefore("&").ifBlank {
+                        Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(abs)?.groupValues?.getOrNull(1).orEmpty()
+                    }
+                    if (id.isNotBlank()) {
+                        resolveDodoOnce(id, mainUrl, { }, callback)
+                    }
                 }
-                if (id.isNotBlank()) {
-                    resolveDodoRedirect(id, serverName, quality, mainUrl, { }, callback)
-                } else {
-                    loadFixedExtractor(abs, serverName, quality, mainUrl, { }, callback)
+                abs.contains("pixeldrain", true) -> {
+                    loadFixedExtractor(abs, "Pixel", Qualities.Unknown.value, mainUrl, { }, callback)
                 }
-            } else {
-                // recurse one level with CF
-                val inner = request(abs, ref = iframe)
-                val innerLink = extractPlayerSource(inner.text, abs)
-                if (!innerLink.isNullOrBlank()) {
-                    emitDirectMedia(serverName, innerLink, quality, abs, callback)
+                else -> {
+                    val inner = request(abs, ref = iframe)
+                    if (!isTurnstileGate(inner.text)) {
+                        extractPlayerSource(inner.text, abs)?.let {
+                            emitDirectMedia(serverName, it, quality, abs, callback)
+                        }
+                    }
                 }
             }
         }
@@ -498,7 +523,19 @@ class AnimeSailProvider : MainAPI() {
         }
     }
 
-    /** Dodo (Dood) multi-host after AnimeSail redirect id= */
+    /** Dodo once — single host resolve, quality Unknown (mirror "1080p" often false). */
+    private suspend fun resolveDodoOnce(
+        id: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        // Prefer primary dood embed; DoodStreamSail tries a few hosts internally and emits ONE link
+        val primary = "https://dood.watch/e/$id"
+        loadFixedExtractor(primary, "Dodo", Qualities.Unknown.value, referer, subtitleCallback, callback)
+    }
+
+        @Deprecated("Use resolveDodoOnce")
     private suspend fun resolveDodoRedirect(
         id: String,
         serverName: String,
@@ -507,29 +544,7 @@ class AnimeSailProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val hosts = listOf(
-            "https://rasa-cintaku-semakin-berantai.xyz/e/$id",
-            "https://rasa-cintaku-semakin-berantai.xyz/v/$id",
-            "https://dood.watch/e/$id",
-            "https://dood.ws/e/$id",
-            "https://dood.li/e/$id",
-            "https://dood.so/e/$id",
-            "https://dood.to/e/$id",
-            "https://dood.la/e/$id",
-            "https://d000d.com/e/$id",
-            "https://ds2play.com/e/$id",
-            "https://doply.net/e/$id",
-            "https://vide0.net/e/$id",
-            "https://myvidplay.com/e/$id",
-        )
-        val label = if (serverName.contains("dodo", true) || serverName.contains("dood", true)) {
-            "Dodo"
-        } else {
-            serverName
-        }
-        hosts.forEach { link ->
-            loadFixedExtractor(link, label, quality, referer, subtitleCallback, callback)
-        }
+        resolveDodoOnce(id, referer, subtitleCallback, callback)
     }
 
     private suspend fun loadFixedExtractor(
@@ -549,9 +564,43 @@ class AnimeSailProvider : MainAPI() {
             "Accept" to "*/*",
         )
 
-        // Direct file links need headers (Exo 2004 without Referer)
+        // Pixel: force API download endpoint (in-app play, not "open tab")
+        if (fixed.contains("pixeldrain", true)) {
+            val id = Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""").find(fixed)?.groupValues?.getOrNull(1)
+                ?: fixed.trimEnd('/').substringAfterLast('/')
+            if (id.isNotBlank() && id.length in 4..40) {
+                val direct = "https://pixeldrain.com/api/file/$id?download"
+                val page = "https://pixeldrain.com/u/$id"
+                callback(
+                    newExtractorLink(
+                        source = "Pixel",
+                        name = "Pixel",
+                        url = direct,
+                        type = ExtractorLinkType.VIDEO,
+                    ) {
+                        this.referer = page
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to baseHeaders.getValue("User-Agent"),
+                            "Referer" to page,
+                            "Origin" to "https://pixeldrain.com",
+                            "Accept" to "*/*",
+                            "Accept-Encoding" to "identity",
+                        )
+                    }
+                )
+                return
+            }
+        }
+
         if (fixed.contains(".mp4", true) || fixed.contains(".m3u8", true)) {
-            callback.invoke(
+            // Don't stamp fake 1080 on dood CDN urls
+            val q = when {
+                serverName.equals("Dodo", true) -> Qualities.Unknown.value
+                quality != null && quality > 0 -> quality
+                else -> Qualities.Unknown.value
+            }
+            callback(
                 newExtractorLink(
                     source = serverName,
                     name = serverName,
@@ -559,27 +608,38 @@ class AnimeSailProvider : MainAPI() {
                     type = if (fixed.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = ref
-                    this.quality = quality ?: Qualities.Unknown.value
+                    this.quality = q
                     this.headers = baseHeaders
                 }
             )
             return
         }
 
+        // Dodo: never fan-out multi-host here — single loadExtractor
+        val isDodo = serverName.equals("Dodo", true) ||
+            fixed.contains("dood", true) || fixed.contains("rasa-cintaku", true) ||
+            fixed.contains("doply", true) || fixed.contains("vide0", true) ||
+            fixed.contains("myvidplay", true) || fixed.contains("d000d", true)
+
+        val outQuality = if (isDodo) Qualities.Unknown.value else (quality ?: Qualities.Unknown.value)
+        val outName = if (isDodo) "Dodo" else serverName
+
         loadExtractor(fixed, ref, subtitleCallback) { link ->
             runBlocking {
                 val merged = LinkedHashMap<String, String>()
                 merged.putAll(baseHeaders)
                 merged.putAll(link.headers)
-                callback.invoke(
+                callback(
                     newExtractorLink(
-                        source = serverName,
-                        name = serverName,
+                        source = outName,
+                        name = outName,
                         url = link.url,
                         type = link.type
                     ) {
                         this.referer = link.referer.ifBlank { ref }
-                        this.quality = quality?.takeIf { it > 0 } ?: link.quality
+                        // Never override Dodo with mirror 1080 label
+                        this.quality = if (isDodo) Qualities.Unknown.value
+                        else outQuality.takeIf { it > 0 } ?: link.quality
                         this.headers = merged
                         this.extractorData = link.extractorData
                     }
@@ -587,7 +647,7 @@ class AnimeSailProvider : MainAPI() {
             }
         }
 
-        // MixDrop host hop for alternate domains
+        // MixDrop domain hop only (not Dodo — that caused ×8)
         if (fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true)) {
             val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
             if (id != null) {
@@ -602,7 +662,7 @@ class AnimeSailProvider : MainAPI() {
                                 val merged = LinkedHashMap<String, String>()
                                 merged.putAll(baseHeaders)
                                 merged.putAll(link.headers)
-                                callback.invoke(
+                                callback(
                                     newExtractorLink(
                                         source = serverName,
                                         name = serverName,
@@ -621,52 +681,10 @@ class AnimeSailProvider : MainAPI() {
                 }
             }
         }
-
-        // Dodo / Dood host hop
-        if (fixed.contains("dood", true) || fixed.contains("doply", true) ||
-            fixed.contains("vide0", true) || fixed.contains("ds2play", true) ||
-            fixed.contains("d000d", true) || fixed.contains("rasa-cintaku", true) ||
-            fixed.contains("myvidplay", true) || serverName.contains("dodo", true)
-        ) {
-            val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
-            if (id != null) {
-                listOf(
-                    "https://dood.watch/e/$id",
-                    "https://dood.ws/e/$id",
-                    "https://dood.li/e/$id",
-                    "https://rasa-cintaku-semakin-berantai.xyz/e/$id",
-                    "https://myvidplay.com/e/$id",
-                ).forEach { alt ->
-                    if (!alt.equals(fixed, true)) {
-                        loadExtractor(alt, ref, subtitleCallback) { link ->
-                            runBlocking {
-                                val merged = LinkedHashMap<String, String>()
-                                merged.putAll(baseHeaders)
-                                merged.putAll(link.headers)
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = "Dodo",
-                                        name = "Dodo",
-                                        url = link.url,
-                                        type = link.type
-                                    ) {
-                                        this.referer = link.referer.ifBlank { ref }
-                                        this.quality = quality?.takeIf { it > 0 } ?: link.quality
-                                        this.headers = merged
-                                        this.extractorData = link.extractorData
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
     }
 
     private fun getIndexQuality(str: String): Int {
-        return Regex("(\\d{3,4})[pP]").find(str)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        return Regex("""(\d{3,4})[pP]""").find(str)?.groupValues?.getOrNull(1)?.toIntOrNull()
             ?: Qualities.Unknown.value
     }
 

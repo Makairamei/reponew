@@ -12,8 +12,6 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 
 /**
  * MixDrop family — AnimeSail mirrors (m1xdrop / mixdrop.*).
- * No hard playability probe (probe Range often 403 while player GET works).
- * Always attach Referer/Origin/UA for Exo (avoids HTTP 2004).
  */
 open class MixDropBase : ExtractorApi() {
     override var name = "MixDrop"
@@ -134,7 +132,7 @@ class MixDropCom : MixDropBase() {
     override var mainUrl = "https://mixdrop.com"
 }
 
-/** Mp4Upload — embed player.src unpack + headers */
+/** Mp4Upload */
 open class Mp4UploadFix : ExtractorApi() {
     override var name = "Mp4Upload"
     override var mainUrl = "https://www.mp4upload.com"
@@ -219,11 +217,16 @@ class Mp4UploadOrg : Mp4UploadFix() {
     override var mainUrl = "https://mp4upload.org"
 }
 
-/** Pixeldrain direct API file */
+/**
+ * Pixeldrain — direct API download so Exo plays in-app
+ * (without ?download / proper type CS may say "buka di tab baru").
+ */
 class Pixeldrain : ExtractorApi() {
     override var name = "Pixel"
     override var mainUrl = "https://pixeldrain.com"
     override val requiresReferer = false
+
+    override fun getExtractorUrl(id: String): String = "$mainUrl/u/$id"
 
     override suspend fun getUrl(
         url: String,
@@ -233,11 +236,34 @@ class Pixeldrain : ExtractorApi() {
     ) {
         val id = Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
             .find(url)?.groupValues?.getOrNull(1)
-            ?: url.trimEnd('/').substringAfterLast('/').takeIf { it.length in 4..40 }
+            ?: url.trimEnd('/').substringAfterLast('/').takeIf { it.matches(Regex("""[A-Za-z0-9_-]{4,40}""")) }
             ?: return
 
-        val direct = "https://pixeldrain.com/api/file/$id"
+        // Prefer info API for name/size; stream is always /api/file/{id}?download
+        val info = runCatching {
+            app.get(
+                "https://pixeldrain.com/api/file/$id/info",
+                headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "application/json"),
+            ).text
+        }.getOrNull().orEmpty()
+
+        val fileName = Regex(""""name"\s*:\s*"([^"]+)"""").find(info)?.groupValues?.getOrNull(1)
+        val isVideo = fileName.isNullOrBlank() ||
+            fileName.contains(".mp4", true) ||
+            fileName.contains(".mkv", true) ||
+            fileName.contains(".webm", true) ||
+            fileName.contains(".m3u8", true) ||
+            info.contains("\"mime_type\":\"video", true) ||
+            info.contains("video/", true)
+
+        // Always emit direct binary URL — CS needs VIDEO type + download endpoint
+        val direct = "https://pixeldrain.com/api/file/$id?download"
         val page = "https://pixeldrain.com/u/$id"
+
+        if (!isVideo && info.isNotBlank() && info.contains("mime_type") && !info.contains("video")) {
+            // Still try — some entries mis-report; user asked for direct play
+        }
+
         callback(
             newExtractorLink(
                 source = name,
@@ -250,14 +276,17 @@ class Pixeldrain : ExtractorApi() {
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
                     "Referer" to page,
+                    "Origin" to mainUrl,
                     "Accept" to "*/*",
+                    // Helps some CDNs treat as media fetch
+                    "Accept-Encoding" to "identity",
                 )
             }
         )
     }
 }
 
-/** Krakenfiles — GET only */
+/** Krakenfiles */
 class Krakenfiles : ExtractorApi() {
     override var name = "Kraken"
     override var mainUrl = "https://krakenfiles.com"
@@ -306,10 +335,10 @@ class Krakenfiles : ExtractorApi() {
 }
 
 /**
- * Doodstream family — AnimeSail labels this **"Dodo"**.
- * Site: aghanim.xyz/tools/redirect/?id=XXX → dood-like /e/ or /v/.
+ * Dodo = Doodstream. ONE working host only (no multi-host spam).
+ * Quality left Unknown — site label "1080p" is often lie; stream is typically ~720.
  */
-open class DoodStreamSail : ExtractorApi() {
+class DoodStreamSail : ExtractorApi() {
     override var name = "Dodo"
     override var mainUrl = "https://dood.watch"
     override val requiresReferer = true
@@ -327,25 +356,24 @@ open class DoodStreamSail : ExtractorApi() {
             .find(url)?.groupValues?.getOrNull(1)
             ?: return
 
-        val hosts = linkedSetOf(
-            mainUrl.trimEnd('/'),
-            "https://dood.watch",
-            "https://dood.ws",
-            "https://dood.li",
-            "https://dood.so",
-            "https://dood.to",
-            "https://dood.la",
-            "https://dood.pm",
-            "https://dood.wf",
-            "https://dood.yt",
-            "https://dood.re",
-            "https://d000d.com",
-            "https://ds2play.com",
-            "https://doply.net",
-            "https://vide0.net",
-            "https://myvidplay.com",
-            "https://rasa-cintaku-semakin-berantai.xyz",
-        )
+        // Prefer host from input URL first, then a short fallback list (NOT 15 hosts)
+        val preferredHost = runCatching {
+            java.net.URI(url).let { "${it.scheme}://${it.host}" }
+        }.getOrNull()
+
+        val hosts = linkedSetOf<String>().apply {
+            preferredHost?.let { add(it.trimEnd('/')) }
+            addAll(
+                listOf(
+                    "https://dood.watch",
+                    "https://dood.ws",
+                    "https://dood.li",
+                    "https://rasa-cintaku-semakin-berantai.xyz",
+                    "https://myvidplay.com",
+                    "https://d000d.com",
+                )
+            )
+        }
 
         for (host in hosts) {
             val embed = "$host/e/$id"
@@ -376,6 +404,7 @@ open class DoodStreamSail : ExtractorApi() {
                 else -> base
             }
 
+            // Single emit — Unknown quality (don't fake 1080 from mirror label)
             callback(
                 newExtractorLink(
                     source = name,
@@ -395,20 +424,4 @@ open class DoodStreamSail : ExtractorApi() {
             return
         }
     }
-}
-
-class DoodWatch : DoodStreamSail() {
-    override var mainUrl = "https://dood.watch"
-}
-
-class DoodWs : DoodStreamSail() {
-    override var mainUrl = "https://dood.ws"
-}
-
-class DoodLi : DoodStreamSail() {
-    override var mainUrl = "https://dood.li"
-}
-
-class DoodRasa : DoodStreamSail() {
-    override var mainUrl = "https://rasa-cintaku-semakin-berantai.xyz"
 }

@@ -1,9 +1,9 @@
 // use an integer for version numbers
-version = 14
+version = 15
 
 cloudstream {
     language = "id"
-    description = "AnimeSail — Dodo (Dood) + Lokal CF player fix"
+    description = "AnimeSail — 1x Dodo, Pixel direct, Lokal CF retry"
     authors = listOf("sad25kag")
     status = 1
     tvTypes = listOf(

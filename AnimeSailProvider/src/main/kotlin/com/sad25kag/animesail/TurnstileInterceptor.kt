@@ -14,8 +14,8 @@ import okhttp3.Response
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Cloudflare Turnstile gate (AnimeSail / aghanim IP host).
- * Same approach as Betbet working binary.
+ * Cloudflare Turnstile for AnimeSail (episode + /utils/player Lokal).
+ * Gate often returns HTTP 200 with "Loading.." — must detect body, not only 403.
  */
 class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") : Interceptor {
 
@@ -32,16 +32,30 @@ class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") :
         cookieManager.setCookie(domainUrl, "_as_ipin_ct=ID; path=/; SameSite=Strict")
         cookieManager.flush()
 
+        fun isGateBody(body: String): Boolean {
+            val h = body.lowercase()
+            if (h.length > 40000) return false // real page
+            return h.contains("challenges.cloudflare.com/turnstile") ||
+                h.contains("cf-turnstile") ||
+                (h.contains("loading..") && h.contains("turnstile")) ||
+                (h.contains("<title>loading") && h.contains("turnstile"))
+        }
+
         val existingCookies = cookieManager.getCookie(domainUrl) ?: ""
-        if (existingCookies.contains(targetCookie)) {
+        if (existingCookies.contains(targetCookie) || existingCookies.contains("cf_clearance")) {
             val response = chain.proceed(
                 originalRequest.newBuilder()
                     .header("Cookie", existingCookies)
                     .build()
             )
-            if (response.code != 403 && response.code != 503) return response
+            if (response.code != 403 && response.code != 503) {
+                val peek = runCatching { response.peekBody(8192).string() }.getOrDefault("")
+                if (!isGateBody(peek)) return response
+            }
             response.close()
+            // stale cookie — clear and re-solve
             cookieManager.setCookie(domainUrl, "$targetCookie=; Max-Age=0; path=/; Secure")
+            cookieManager.setCookie(domainUrl, "cf_clearance=; Max-Age=0; path=/; Secure")
             cookieManager.flush()
         }
 
@@ -49,7 +63,10 @@ class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") :
             ?: return chain.proceed(originalRequest)
 
         val handler = Handler(Looper.getMainLooper())
-        val userAgentRef = AtomicReference(originalRequest.header("User-Agent") ?: "")
+        val userAgentRef = AtomicReference(
+            originalRequest.header("User-Agent")
+                ?: "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        )
         val webViewRef = AtomicReference<WebView?>(null)
 
         handler.post {
@@ -61,18 +78,17 @@ class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") :
                 domStorageEnabled = true
                 loadWithOverviewMode = true
                 useWideViewPort = true
-                val ua = userAgentRef.get()
-                if (ua.isNotBlank()) userAgentString = ua
+                userAgentString = userAgentRef.get()
             }
             userAgentRef.set(wv.settings.userAgentString)
             wv.webViewClient = object : WebViewClient() {
                 @SuppressLint("WebViewClientOnReceivedSslError")
                 override fun onReceivedSslError(
                     view: WebView?,
-                    handler: SslErrorHandler?,
+                    sslHandler: SslErrorHandler?,
                     error: SslError?,
                 ) {
-                    handler?.proceed()
+                    sslHandler?.proceed()
                 }
 
                 override fun onPageFinished(view: WebView?, finishedUrl: String?) {
@@ -83,7 +99,8 @@ class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") :
             wv.loadUrl(url)
         }
 
-        for (i in 0 until 60) {
+        // Wait up to 45s for turnstile / clearance cookie
+        for (i in 0 until 45) {
             Thread.sleep(1000)
             val cookies = cookieManager.getCookie(domainUrl) ?: ""
             if (cookies.contains(targetCookie) || cookies.contains("cf_clearance")) {
@@ -106,6 +123,8 @@ class TurnstileInterceptor(private val targetCookie: String = "_as_turnstile") :
             originalRequest.newBuilder()
                 .apply { if (finalUA.isNotBlank()) header("User-Agent", finalUA) }
                 .header("Cookie", finalCookies)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
                 .build()
         )
     }
