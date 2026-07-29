@@ -228,15 +228,25 @@ class Anichin : MainAPI() {
             val n = link.name.trim().lowercase()
             if (n.matches(Regex("""i\d+"""))) return
 
-            // Dailymotion: keep ONLY the adaptive master (Unknown quality, plain name).
-            // Any "Dailymotion 1080p/720p/…" quality leaf is video-only → silent → drop.
             val src = link.source.trim().lowercase()
+            val q = normalizePlayQuality(link.quality)
+
+            // Global: drop 1440/2160 (Rumble ultra etc.)
+            if (!isPlayableQuality(link.quality) && link.quality > 0) return
+            if (q == Qualities.P1440.value || q == Qualities.P2160.value) return
+            if (n.contains("1440") || n.contains("2160") || n.contains("4k")) return
+
+            // TurboVIP: "jarak jauh" on 1080 — keep only ≤720
+            if (isTurboHost(src, link.url) || isTurboHost(n)) {
+                if (q >= Qualities.P1080.value) return
+                if (n.contains("1080") || n.contains("1440") || n.contains("2160")) return
+            }
+
+            // Dailymotion: exactly one adaptive entry (name plain, no quality text clones)
             if (src.contains("dailymotion") || n.contains("dailymotion") || isAudioSeparateMasterHost(link.url)) {
-                val q = link.quality
-                if (q != Qualities.Unknown.value && q > 0) return
-                if (n.contains("1080") || n.contains("720") || n.contains("480") ||
-                    n.contains("360") || n.contains("240") || Regex("""\d{3,4}p""").containsMatchIn(n)
-                ) return
+                // Allow the single master (even if quality tagged 1080 for ranking)
+                if (Regex("""\d{3,4}p""").containsMatchIn(n) && n != "dailymotion") return
+                if (n.contains(" ") && (n.contains("720") || n.contains("480") || n.contains("360"))) return
             }
 
             if (emitted.add(link.url)) callback(link)
@@ -646,20 +656,21 @@ class Anichin : MainAPI() {
 
     private fun candidatePriority(url: String, label: String): Int {
         val value = "$label $url".lowercase()
-        // Fast direct hosts first; Rumble (DNS-heavy) last so UI fills quickly in parallel
+        // Play order: Dailymotion (adaptive) → OK.ru → StreamRuby → rest → Rumble last
         return when {
-            value.contains("streamruby") || value.contains("rubyvidhub") -> 0
+            value.contains("dailymotion") || value.contains("dai.ly") ||
+                (value.contains("anichin-player") && value.contains("url=")) -> 0
             value.contains("ok.ru") || value.contains("odnoklassniki.ru") ||
                 (value.contains("anichin-player") && value.contains("ok=")) -> 1
-            value.contains("dailymotion") || value.contains("dai.ly") ||
-                (value.contains("anichin-player") && value.contains("url=")) -> 2
-            value.contains("turbovidhls") || value.contains("turboviplay") -> 3
-            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 4
-            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 5
+            value.contains("streamruby") || value.contains("rubyvidhub") -> 2
+            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 3
+            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 4
             value.contains("abyssplayer") || value.contains("newplayr") ||
-                value.contains("streamhg") || value.contains("streamwish") -> 6
-            value.contains("vidguard") -> 7
-            value.contains("dood") || value.contains("playmogo") -> 8
+                value.contains("streamhg") || value.contains("streamwish") -> 5
+            value.contains("vidguard") -> 6
+            value.contains("dood") || value.contains("playmogo") -> 7
+            // TurboVIP often remote-fail at high Q — low priority (and 1080 filtered)
+            value.contains("turbovidhls") || value.contains("turboviplay") || value.contains("turbo") -> 8
             value.contains("rumble") -> 9
             value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 10
             else -> 12

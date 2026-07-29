@@ -198,7 +198,9 @@ open class Dailymotion : ExtractorApi() {
         return if (id.matches(videoIdRegex)) id else null
     }
 
-    /** Exactly one link named "Dailymotion" — adaptive master with AUDIO. */
+    /** Exactly one link named "Dailymotion" — adaptive master with AUDIO.
+     * quality = P1080 so CloudStream auto-play ranks it first (track picker still inside player).
+     */
     private suspend fun emitMasterOnly(
         streamLink: String,
         videoId: String,
@@ -213,7 +215,8 @@ open class Dailymotion : ExtractorApi() {
                 type = ExtractorLinkType.M3U8,
             ) {
                 this.referer = embedUrl
-                this.quality = Qualities.Unknown.value
+                // Rank high for auto-play; single entry → no multi "Dailymotion 720/480" clones
+                this.quality = Qualities.P1080.value
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
                     "Referer" to embedUrl,

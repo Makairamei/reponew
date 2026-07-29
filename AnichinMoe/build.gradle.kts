@@ -1,7 +1,7 @@
-version = 51
+version = 52
 
 cloudstream {
-    description = "Anichin Moe — multi-Q Rumble + all hosts parallel"
+    description = "Anichin Moe — DM first, Rumble≤1080, no Turbo1080"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

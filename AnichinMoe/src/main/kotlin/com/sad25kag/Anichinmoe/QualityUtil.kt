@@ -9,8 +9,14 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 internal const val ANICHIN_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+/**
+ * Normalize raw height / CS quality int into standard buckets.
+ * Heights 800–1399 → 1080 (covers 818 StreamRuby, 900–1080, etc.).
+ * ≥1400 → 1440 (will be dropped by isPlayableQuality).
+ */
 internal fun normalizePlayQuality(raw: Int): Int {
     if (raw <= 0) return Qualities.Unknown.value
+    // Already a known CS bucket
     if (raw == Qualities.P2160.value || raw == Qualities.P1440.value ||
         raw == Qualities.P1080.value || raw == Qualities.P720.value ||
         raw == Qualities.P480.value || raw == Qualities.P360.value ||
@@ -18,13 +24,38 @@ internal fun normalizePlayQuality(raw: Int): Int {
     ) return raw
 
     return when {
+        raw >= 2000 -> Qualities.P2160.value
         raw >= 1400 -> Qualities.P1440.value
         raw >= 800 -> Qualities.P1080.value
         raw >= 700 -> Qualities.P720.value
+        raw >= 500 -> Qualities.P480.value
         raw >= 400 -> Qualities.P480.value
         raw >= 300 -> Qualities.P360.value
         raw >= 200 -> Qualities.P240.value
         else -> raw
+    }
+}
+
+/**
+ * Playable cap: allow Unknown + everything ≤1080.
+ * Drop 1440 / 2160 (Rumble ultra often fails on device).
+ *
+ * IMPORTANT: compare against known enum buckets, not only raw 1080,
+ * so P1080 always passes and P1440 always fails.
+ */
+internal fun isPlayableQuality(q: Int): Boolean {
+    if (q <= 0 || q == Qualities.Unknown.value) return true
+    val n = normalizePlayQuality(q)
+    return when (n) {
+        Qualities.P144.value,
+        Qualities.P240.value,
+        Qualities.P360.value,
+        Qualities.P480.value,
+        Qualities.P720.value,
+        Qualities.P1080.value -> true
+        Qualities.P1440.value,
+        Qualities.P2160.value -> false
+        else -> n in 1..1080
     }
 }
 
@@ -57,8 +88,8 @@ internal fun isJunkStreamUrl(url: String, nameHint: String = ""): Boolean {
 }
 
 /**
- * Dailymotion (and similar) masters use separate EXT-X-MEDIA AUDIO groups.
- * Expanding with generateM3u8 yields video-only leaves → silent "Dailymotion 1080p".
+ * Dailymotion masters use separate EXT-X-MEDIA AUDIO groups.
+ * Expanding leaves → silent video-only.
  */
 internal fun isAudioSeparateMasterHost(url: String): Boolean {
     val u = url.lowercase()
@@ -69,21 +100,24 @@ internal fun isAudioSeparateMasterHost(url: String): Boolean {
         (u.contains("geo.dailymotion") && u.contains(".m3u8"))
 }
 
+internal fun isTurboHost(sourceOrName: String, url: String = ""): Boolean {
+    val v = "$sourceOrName $url".lowercase()
+    return v.contains("turbo") || v.contains("turbovid") || v.contains("turboviplay")
+}
+
 internal fun cleanServerLabel(raw: String): String {
     return raw
         .replace(Regex("""\[.*?\]"""), "")
         .replace(Regex("""\(.*?\)"""), "")
-        // Keep "Rumble" readable; DNS is a site hint not part of player name
         .replace(Regex("""(?i)\s*setting\s*dns\s*"""), "")
         .trim()
         .ifBlank { "Anichin" }
 }
 
 /**
- * Emit HLS for CloudStream.
- *
- * For Dailymotion-class masters: **master only** (sound). Never emit quality leaves.
- * For others: expand multi-quality, drop i-frame junk, name = source only.
+ * Emit HLS variants.
+ * - DM-class: master only (sound)
+ * - others: expand, drop junk + >1080, name = source only
  */
 internal suspend fun emitHlsVariants(
     source: String,
@@ -98,21 +132,27 @@ internal suspend fun emitHlsVariants(
     ),
     preferMaster: Boolean = false,
     masterOnly: Boolean = false,
+    /** Soft cap for this host (e.g. Turbo ≤720). Null = global ≤1080. */
+    maxQuality: Int? = null,
 ) {
     val cleanSource = cleanServerLabel(source)
-    val forceMasterOnly = masterOnly || isAudioSeparateMasterHost(streamUrl) || preferMaster && isAudioSeparateMasterHost(streamUrl)
+    val forceMasterOnly =
+        masterOnly || isAudioSeparateMasterHost(streamUrl) ||
+            (preferMaster && isAudioSeparateMasterHost(streamUrl))
 
-    if (forceMasterOnly || preferMaster || isAudioSeparateMasterHost(streamUrl)) {
-        // ONE entry — player adaptive, keeps AUDIO. No "Source 1080p" silent clones.
+    if (forceMasterOnly) {
         callback(
             newExtractorLink(cleanSource, cleanSource, streamUrl, ExtractorLinkType.M3U8) {
                 this.referer = referer
-                this.quality = Qualities.Unknown.value
+                // P1080 so CS auto-play ranks DM/adaptive near top without multi labels
+                this.quality = Qualities.P1080.value
                 this.headers = headers
             }
         )
         return
     }
+
+    val cap = maxQuality ?: 1080
 
     val links = runCatching {
         M3u8Helper.generateM3u8(
@@ -124,13 +164,24 @@ internal suspend fun emitHlsVariants(
     }.getOrElse { emptyList() }
         .filterNot { isJunkStreamUrl(it.url, it.name) }
         .map { link -> normalizePlayQuality(link.quality) to link }
+        .filter { (q, _) ->
+            when {
+                q <= 0 || q == Qualities.Unknown.value -> true
+                !isPlayableQuality(q) -> false
+                q > cap -> false
+                else -> true
+            }
+        }
         .sortedByDescending { it.first }
 
     if (links.isEmpty()) {
+        // Fallback adaptive master — mark 1080 for ranking, player picks track
         callback(
             newExtractorLink(cleanSource, cleanSource, streamUrl, ExtractorLinkType.M3U8) {
                 this.referer = referer
-                this.quality = Qualities.Unknown.value
+                this.quality = Qualities.P1080.value.coerceAtMost(cap).let {
+                    if (cap < 1080) Qualities.P720.value else Qualities.P1080.value
+                }
                 this.headers = headers
             }
         )
@@ -139,7 +190,6 @@ internal suspend fun emitHlsVariants(
 
     links.forEach { (q, link) ->
         if (isJunkStreamUrl(link.url, link.name)) return@forEach
-        // Skip if leaf looks like audio-less fmp4 video track only from DM (belt+suspenders)
         if (isAudioSeparateMasterHost(link.url)) return@forEach
         callback(
             newExtractorLink(

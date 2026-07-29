@@ -11,16 +11,8 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 /**
- * Rumble — Betbet scrape path + multi-quality emission.
- *
- * Betbet finds the HLS master via:
- *   script:containsData(mp4) → {"mp4 … "evt":{ → "url":"…m3u8"
- *
- * We keep that discovery, then:
- * - expand master with generateM3u8 → 360/480/720/1080 list items (like Betbet UI)
- * - also emit progressive mp4 rungs from the same JSON blob when present
- *
- * Single page fetch only (no embedJS timeout loops).
+ * Rumble — Betbet discovery + multi-quality, **capped at 1080p**.
+ * 1440/2160 dropped (unplayable on many devices). 1080 kept.
  */
 class Rumble : ExtractorApi() {
     override var name = "Rumble"
@@ -46,14 +38,13 @@ class Rumble : ExtractorApi() {
             "Accept" to "*/*",
         )
 
-        // --- Betbet script blob ---
         val scriptData = response.document.selectFirst("script:containsData(mp4)")?.data()
             ?.substringAfter("{\"mp4")
             ?.substringBefore("\"evt\":{")
             .orEmpty()
 
         val m3u8s = linkedSetOf<String>()
-        val mp4s = linkedMapOf<Int, String>() // quality -> url
+        val mp4s = linkedMapOf<Int, String>()
 
         fun absorbUrl(raw: String, qualityHint: String? = null) {
             val cleaned = raw.replace("\\/", "/").trim()
@@ -67,29 +58,42 @@ class Rumble : ExtractorApi() {
             when {
                 cleaned.contains(".m3u8", true) -> m3u8s.add(cleaned)
                 cleaned.contains(".mp4", true) -> {
-                    val q = qualityHint?.let { getQualityFromName(it) }?.takeIf { it > 0 }
-                        ?: Regex("""(\d{3,4})p?""").find(cleaned)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                            ?.let { normalizePlayQuality(it) }
-                        ?: Qualities.Unknown.value
-                    // keep highest URL per quality bucket
-                    mp4s[q] = cleaned
+                    val q = when {
+                        !qualityHint.isNullOrBlank() -> {
+                            val fromName = getQualityFromName(qualityHint)
+                            if (fromName > 0) normalizePlayQuality(fromName)
+                            else normalizePlayQuality(
+                                qualityHint.filter { it.isDigit() }.toIntOrNull() ?: 0
+                            )
+                        }
+                        else -> {
+                            val h = Regex("""(\d{3,4})""")
+                                .findAll(cleaned)
+                                .mapNotNull { it.groupValues[1].toIntOrNull() }
+                                .filter { it in 144..2160 }
+                                .maxOrNull()
+                            normalizePlayQuality(h ?: 0)
+                        }
+                    }
+                    // Cap: never store 1440/2160 entries
+                    if (!isPlayableQuality(q) && q > 0) return
+                    if (q > 0) mp4s[q] = cleaned
+                    else mp4s.putIfAbsent(Qualities.Unknown.value, cleaned)
                 }
             }
         }
 
         if (scriptData.isNotBlank()) {
-            // Betbet regex
             val regex = """"url":"(.*?)"|h":(.*?)\}""".toRegex()
             for (match in regex.findAll(scriptData)) {
                 absorbUrl(match.groupValues[1])
             }
-            // quality-keyed maps often look like "1080":{"url":"..."} or "720":{"url":"..."}
+            // "1080":{"url":"..."} / "720":{"url":"..."}
             Regex(""""(\d{3,4})"\s*:\s*\{[^}]*?"url"\s*:\s*"(https?://[^"]+)"""")
                 .findAll(scriptData)
                 .forEach { absorbUrl(it.groupValues[2], it.groupValues[1] + "p") }
         }
 
-        // Full page fallbacks
         Regex(""""(\d{3,4})"\s*:\s*\{[^}]*?"url"\s*:\s*"(https?://[^"]+)"""")
             .findAll(body)
             .forEach { absorbUrl(it.groupValues[2], it.groupValues[1] + "p") }
@@ -104,17 +108,38 @@ class Rumble : ExtractorApi() {
 
         var emitted = false
 
-        // 1) Progressive MP4 ladder (explicit qualities — matches "banyak kualitas" list)
+        // Prefer explicit ladder: 1080 → 720 → 480 → 360 (no 1440)
+        val preferredOrder = listOf(
+            Qualities.P1080.value,
+            Qualities.P720.value,
+            Qualities.P480.value,
+            Qualities.P360.value,
+            Qualities.P240.value,
+        )
+
+        preferredOrder.forEach { want ->
+            val stream = mp4s[want] ?: return@forEach
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = stream,
+                    type = ExtractorLinkType.VIDEO,
+                ) {
+                    this.referer = mainUrl
+                    this.quality = want
+                    this.headers = headers
+                }
+            )
+            emitted = true
+        }
+        // any other ≤1080 mp4 not in preferred list
         mp4s.entries
+            .filter { (q, _) -> isPlayableQuality(q) && q !in preferredOrder }
             .sortedByDescending { it.key }
             .forEach { (q, stream) ->
                 callback(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = stream,
-                        type = ExtractorLinkType.VIDEO,
-                    ) {
+                    newExtractorLink(name, name, stream, ExtractorLinkType.VIDEO) {
                         this.referer = mainUrl
                         this.quality = if (q > 0) q else Qualities.Unknown.value
                         this.headers = headers
@@ -123,7 +148,7 @@ class Rumble : ExtractorApi() {
                 emitted = true
             }
 
-        // 2) HLS masters → expand to quality list (360/720/1080…)
+        // HLS expand — keep ≤1080 only (must include 1080 if master has it)
         for (master in m3u8s) {
             val links = runCatching {
                 M3u8Helper.generateM3u8(
@@ -134,10 +159,18 @@ class Rumble : ExtractorApi() {
                 )
             }.getOrElse { emptyList() }
                 .filterNot { isJunkStreamUrl(it.url, it.name) }
+                .map { normalizePlayQuality(it.quality) to it }
+                .filter { (q, _) -> isPlayableQuality(q) }
+                .sortedByDescending { it.first }
 
             if (links.isNotEmpty()) {
-                links
-                    .map { normalizePlayQuality(it.quality) to it }
+                // Dedupe by quality bucket — one link per rung, 1080 first
+                val byQ = linkedMapOf<Int, Pair<Int, com.lagradost.cloudstream3.utils.ExtractorLink>>()
+                links.forEach { (q, link) ->
+                    val key = if (q > 0) q else Qualities.Unknown.value
+                    if (!byQ.containsKey(key)) byQ[key] = q to link
+                }
+                byQ.values
                     .sortedByDescending { it.first }
                     .forEach { (q, link) ->
                         callback(
@@ -154,26 +187,18 @@ class Rumble : ExtractorApi() {
                         )
                         emitted = true
                     }
-            } else {
-                // master as adaptive fallback
+            } else if (!emitted) {
+                // Only if nothing else: adaptive master tagged 1080 for ranking
                 callback(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = master,
-                        type = ExtractorLinkType.M3U8,
-                    ) {
+                    newExtractorLink(name, name, master, ExtractorLinkType.M3U8) {
                         this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
+                        this.quality = Qualities.P1080.value
                         this.headers = headers
                     }
                 )
                 emitted = true
             }
         }
-
-        // nothing found → silent return (don't block other hosts)
-        if (!emitted) return
     }
 
     private fun normalizeEmbed(url: String): String {

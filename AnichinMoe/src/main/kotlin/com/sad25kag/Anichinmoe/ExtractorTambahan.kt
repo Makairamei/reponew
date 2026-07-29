@@ -362,7 +362,7 @@ class Turbovidhls : ExtractorApi() {
             "Accept" to "*/*",
         )
 
-        // Expand each master once (cdn may point to turbosplayer leaf/master)
+        // Expand each master; Turbo soft-cap ≤720 (1080 remote often fails)
         m3u8s.forEach { stream ->
             emitHlsVariants(
                 source = name,
@@ -370,6 +370,7 @@ class Turbovidhls : ExtractorApi() {
                 referer = mainUrl,
                 callback = callback,
                 headers = headers,
+                maxQuality = Qualities.P720.value,
             )
         }
     }
