@@ -73,10 +73,13 @@ open class Odnoklassniki : ExtractorApi() {
             }
 
             if (hlsLinks.isNotEmpty()) {
+                // Multi-quality HLS first (often includes 1080p full)
                 hlsLinks.forEach(callback)
-                return
             }
         }
+
+        // Always also try progressive MP4 ladder (mobile/lowest/low/sd/hd/full)
+        // so UI shows discrete 144–1080 options even if HLS parse fails.
 
         val metadataWebm = extractOkRuField(videoReq, "metadataWebmUrl")
         if (!metadataWebm.isNullOrBlank()) {
@@ -92,17 +95,17 @@ open class Odnoklassniki : ExtractorApi() {
                     this.headers = mediaHeaders
                 }
             )
-            return
         }
 
         val videosStr = Regex(""""videos"\s*:\s*(\[[^\]]*])""")
             .find(videoReq)
             ?.groupValues
             ?.getOrNull(1)
-            ?: throw ErrorLoadingException("Video not found")
 
-        val videos = parseOkRuVideos(videosStr).takeIf { it.isNotEmpty() }
-            ?: throw ErrorLoadingException("Video not found")
+        val videos = videosStr?.let { parseOkRuVideos(it) }.orEmpty()
+        if (videos.isEmpty() && hlsManifest.isNullOrBlank() && metadataWebm.isNullOrBlank()) {
+            throw ErrorLoadingException("Video not found")
+        }
 
         videos.forEach { video ->
             val videoUrl = if (video.url.startsWith("//")) "https:${video.url}" else video.url

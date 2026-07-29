@@ -1,7 +1,7 @@
-version = 45
+version = 46
 
 cloudstream {
-    description = "Anichin Moe"
+    description = "Anichin Moe — multi-server + multi-quality HLS"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

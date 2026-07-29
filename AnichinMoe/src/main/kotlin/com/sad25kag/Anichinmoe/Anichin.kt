@@ -15,12 +15,12 @@ class Anichin : MainAPI() {
     companion object {
         var context: android.content.Context? = null
 
-        private const val MAX_TOP_LEVEL_CANDIDATES = 12
-        private const val MAX_DOWNLOAD_CANDIDATES = 6
-        private const val MAX_NESTED_CANDIDATES = 10
-        private const val MAX_RESOLVE_DEPTH = 1
-        private const val MAX_VISITED_LINKS = 28
-        private const val MAX_NESTED_TEXT_BYTES = 1_000_000L
+        private const val MAX_TOP_LEVEL_CANDIDATES = 24
+        private const val MAX_DOWNLOAD_CANDIDATES = 8
+        private const val MAX_NESTED_CANDIDATES = 16
+        private const val MAX_RESOLVE_DEPTH = 2
+        private const val MAX_VISITED_LINKS = 48
+        private const val MAX_NESTED_TEXT_BYTES = 1_500_000L
     }
 
     override var mainUrl = "https://anichin.moe"
@@ -508,6 +508,8 @@ class Anichin : MainAPI() {
     private fun isPrimaryPlaybackHost(url: String, label: String): Boolean {
         val value = "$label $url".lowercase()
         if (isNoiseFrame(url)) return false
+        // Skip pure ad-label servers only when the URL itself is an ads network (keep real hosts even if label says ADS)
+        if (isAdsOnlyUrl(url)) return false
         return value.contains("dailymotion.com") ||
             value.contains("geo.dailymotion.com") ||
             value.contains("dai.ly") ||
@@ -521,14 +523,18 @@ class Anichin : MainAPI() {
             value.contains("myvidplay") ||
             value.contains("dood") ||
             value.contains("abyssplayer") ||
+            value.contains("abyss.to") ||
             value.contains("hgcloud") ||
+            value.contains("hanerix") ||
             value.contains("turbovidhls") ||
+            value.contains("turboviplay") ||
             value.contains("d.tube") ||
             value.contains("anichin-player.web.id") ||
             value.contains("streamruby") ||
-            value.contains("streamruby.com") ||
+            value.contains("rubyvidhub") ||
             value.contains("rpmshare") ||
             value.contains("rpmplay") ||
+            value.contains("rpmvid") ||
             value.contains("earnvids") ||
             value.contains("smoothpre") ||
             value.contains("dhtpre") ||
@@ -536,6 +542,7 @@ class Anichin : MainAPI() {
             value.contains("newplayr") ||
             value.contains("streamhg") ||
             value.contains("streamwish") ||
+            value.contains("acek-cdn") ||
             value.contains("acefile") ||
             value.contains("pahe") ||
             value.contains("hxfile") ||
@@ -547,22 +554,37 @@ class Anichin : MainAPI() {
             value.contains("/player") ||
             value.contains("/v/") ||
             value.contains("/video") ||
+            value.contains("/t/") ||
             value.contains(".m3u8") ||
             value.contains(".mp4")
     }
 
+    private fun isAdsOnlyUrl(url: String): Boolean {
+        val value = url.lowercase()
+        return value.contains("wearadmiration.com") ||
+            value.contains("doubleclick") ||
+            value.contains("googlesyndication") ||
+            value.contains("popads") ||
+            value.contains("exoclick") ||
+            value.contains("propellerads")
+    }
+
     private fun candidatePriority(url: String, label: String): Int {
         val value = "$label $url".lowercase()
+        // Prefer direct multi-quality hosts first
         return when {
-            value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 0
-            value.contains("ok.ru") || value.contains("odnoklassniki.ru") -> 1
-            value.contains("streamruby") -> 2
-            value.contains("rpmshare") || value.contains("earnvids") -> 3
-            value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 4
-            value.contains("vidguard") || value.contains("vidhide") -> 5
-            value.contains("rumble.com") -> 6
-            value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 7
-            else -> 10
+            value.contains("turbovidhls") || value.contains("turboviplay") -> 0
+            value.contains("streamruby") || value.contains("rubyvidhub") -> 1
+            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 2
+            value.contains("ok.ru") || value.contains("odnoklassniki.ru") || value.contains("anichin-player") -> 3
+            value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 4
+            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 5
+            value.contains("abyssplayer") || value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 6
+            value.contains("vidguard") -> 7
+            value.contains("rumble.com") -> 8
+            value.contains("dood") || value.contains("playmogo") -> 9
+            value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 10
+            else -> 12
         }
     }
 
@@ -639,22 +661,33 @@ class Anichin : MainAPI() {
         "anichin-player.web.id",
         "morencius.com",
         "playmogo.com",
+        "myvidplay.com",
         "abyssplayer.com",
+        "abyss.to",
         "hgcloud.to",
         "hanerix.com",
         "rpmshare.com",
+        "rpmshare.net",
         "rpmplay.me",
+        "rpmvid.com",
         "earnvids.com",
         "smoothpre.com",
         "dhtpre.com",
         "peytonepre.com",
         "newplayr.com",
+        "newplayr.org",
         "streamhg.com",
+        "streamhg.net",
         "streamwish.to",
+        "streamwish.com",
         "turbovidhls.com",
+        "turboviplay.com",
         "d.tube",
         "rumble.com",
-        "rubyvidhub.com"
+        "rubyvidhub.com",
+        "streamruby.com",
+        "streamruby.net",
+        "acek-cdn.com",
     )
 
 

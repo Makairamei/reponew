@@ -1,21 +1,13 @@
 package com.sad25kag.Anichinmoe
 
-import android.util.Log
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.ErrorLoadingException
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.newSubtitleFile
-import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.INFER_TYPE
-import com.lagradost.cloudstream3.utils.getQualityFromName
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.*
-import org.jsoup.Jsoup
 
 class Rumble : ExtractorApi() {
     override var name = "Rumble"
@@ -28,39 +20,67 @@ class Rumble : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val response = app.get(url, referer = referer ?: "$mainUrl/")
+        val response = runCatching {
+            app.get(url, referer = referer ?: "$mainUrl/")
+        }.getOrNull() ?: return
+
+        val body = response.text
+        val candidates = linkedSetOf<String>()
+
+        Regex(""""(?:url|hls|ua)"\s*:\s*"(https?://[^"]+)"""")
+            .findAll(body)
+            .map { it.groupValues[1].replace("\\/", "/") }
+            .forEach { candidates.add(it) }
+
+        Regex("""https?://[^\s"'<>]+rumble[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .map { it.value.replace("\\/", "/") }
+            .forEach { candidates.add(it) }
+
+        Regex("""https?://[^\s"'<>]+rumble[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .map { it.value.replace("\\/", "/") }
+            .forEach { candidates.add(it) }
+
         val scriptData = response.document.selectFirst("script:containsData(mp4)")?.data()
             ?.substringAfter("{\"mp4")?.substringBefore("\"evt\":{")
-        if (scriptData == null) return
+        if (!scriptData.isNullOrBlank()) {
+            Regex(""""url":"([^"]+)"""")
+                .findAll(scriptData)
+                .map { it.groupValues[1].replace("\\/", "/") }
+                .forEach { candidates.add(it) }
+        }
 
-        val regex = """"url":"(.*?)"|h":(.*?)\}""".toRegex()
-        val matches = regex.findAll(scriptData)
-
-        val processedUrls = mutableSetOf<String>()
-
-        for (match in matches) {
-            val rawUrl = match.groupValues[1]
-            if (rawUrl.isBlank()) continue
-
-            val cleanedUrl = rawUrl.replace("\\/", "/")
-            if (!cleanedUrl.contains("rumble.com")) continue
-            if (!cleanedUrl.endsWith(".m3u8")) continue
-            if (!processedUrls.add(cleanedUrl)) continue
-
-            val m3u8Response = app.get(cleanedUrl)
-            val variantCount = "#EXT-X-STREAM-INF".toRegex().findAll(m3u8Response.text).count()
-
-            if (variantCount > 1) {
-                callback.invoke(
-                    newExtractorLink(
-                        this@Rumble.name,   // source
-                        "Rumble",       // name
-                        cleanedUrl,         // url
-                        ExtractorLinkType.M3U8 // type
-                        // initializer tidak perlu diisi
+        for (stream in candidates) {
+            when {
+                stream.contains(".m3u8", true) -> {
+                    runCatching {
+                        M3u8Helper.generateM3u8(
+                            source = name,
+                            streamUrl = stream,
+                            referer = mainUrl,
+                        ).forEach(callback)
+                    }.onFailure {
+                        callback.invoke(
+                            newExtractorLink(name, name, stream, ExtractorLinkType.M3U8)
+                        )
+                    }
+                }
+                stream.contains(".mp4", true) -> {
+                    val quality = when {
+                        stream.contains("1080") -> Qualities.P1080.value
+                        stream.contains("720") -> Qualities.P720.value
+                        stream.contains("480") -> Qualities.P480.value
+                        stream.contains("360") -> Qualities.P360.value
+                        else -> Qualities.Unknown.value
+                    }
+                    callback.invoke(
+                        newExtractorLink(name, name, stream, ExtractorLinkType.VIDEO) {
+                            this.quality = quality
+                            this.referer = mainUrl
+                        }
                     )
-                )
-                break
+                }
             }
         }
     }
