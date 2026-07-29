@@ -20,5 +20,27 @@
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://anichin.club&size=%size%",
         "apiVersion": 1,
         "fileHash": "sha256-a1e1e509928fe5d75a05059c9ad963df5fc3e106e3c10285909be756d6dc897d"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnimeSailProvider.cs3",
+        "status": 1,
+        "version": 13,
+        "name": "AnimeSailProvider",
+        "internalName": "AnimeSailProvider",
+        "authors": [
+            "sad25kag"
+        ],
+        "description": "AnimeSail \u2014 CF Turnstile + MixDrop/MP4/Kraken/Pixel/Dodo headers fix v13",
+        "fileSize": 50198,
+        "repositoryUrl": "https://github.com/Makairamei/reponew",
+        "language": "id",
+        "tvTypes": [
+            "AnimeMovie",
+            "Anime",
+            "OVA"
+        ],
+        "iconUrl": "https://aghanim.xyz/wp-content/themes/animesail/assets/images/ico.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-485c224f98f9ae6e7efbc8f7f7c3c2e3d5e43933069775a256031c0e576d5bfd"
     }
 ]
