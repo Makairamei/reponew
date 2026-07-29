@@ -2,14 +2,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnichinMoe.cs3",
         "status": 1,
-        "version": 49,
+        "version": 50,
         "name": "AnichinMoe",
         "internalName": "AnichinMoe",
         "authors": [
             "sad25kag"
         ],
-        "description": "Anichin Moe \u2014 DM master-only audio, Rumble DNS, full servers",
-        "fileSize": 96794,
+        "description": "Anichin Moe \u2014 Rumble Betbet-match, sequential servers",
+        "fileSize": 94646,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://anichin.club&size=%size%",
         "apiVersion": 1,
-        "fileHash": "sha256-39f21dcc8bc4ac98ffba6d5dca39ff2d271b43ab5242053f35d306de1a335eb1"
+        "fileHash": "sha256-6e5620e1d660b872431e820ede4b11dba1e78ea6729c0a02ef6c4b7bf45eacd6"
     }
 ]
