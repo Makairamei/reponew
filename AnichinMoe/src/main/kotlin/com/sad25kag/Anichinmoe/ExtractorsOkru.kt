@@ -117,11 +117,11 @@ open class Odnoklassniki : ExtractorApi() {
                 Triple(q, videoUrl, qualityLabel(q))
             }
             .sortedByDescending { it.first }
-            .forEach { (q, videoUrl, label) ->
+            .forEach { (q, videoUrl, _) ->
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "${this.name} $label",
+                        name = this.name, // quality via .quality only — no "OK.ru 1080p 1080p"
                         url = videoUrl,
                         type = INFER_TYPE,
                     ) {

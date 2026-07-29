@@ -10,8 +10,9 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
 
 /**
- * Rumble embed. Uses embedJS API (page scrape often times out / geo-blocked).
- * Qualities come from ua/mp4 maps when present.
+ * Rumble — Anichin labels this "Rumble [Setting DNS]".
+ * Prefers embedJS API; falls back to page scrape (TESTINGCF style).
+ * Display name kept as "Rumble" (DNS hint stripped by cleanServerLabel upstream).
  */
 class Rumble : ExtractorApi() {
     override var name = "Rumble"
@@ -28,12 +29,11 @@ class Rumble : ExtractorApi() {
             .find(url)?.groupValues?.getOrNull(1)
             ?: return
 
+        var body: String? = null
         val apis = listOf(
             "$mainUrl/embedJS/u3/?request=video&v=$embedId",
             "$mainUrl/embedJS/?request=video&v=$embedId",
         )
-
-        var body: String? = null
         for (api in apis) {
             body = runCatching {
                 app.get(
@@ -50,24 +50,24 @@ class Rumble : ExtractorApi() {
         }
 
         if (body.isNullOrBlank()) {
-            // Last resort: embed HTML
             body = runCatching {
-                app.get(url, referer = referer ?: "$mainUrl/", headers = mapOf("User-Agent" to ANICHIN_UA)).text
+                app.get(
+                    url,
+                    referer = referer ?: "$mainUrl/",
+                    headers = mapOf("User-Agent" to ANICHIN_UA),
+                ).text
             }.getOrNull()
         }
         if (body.isNullOrBlank()) return
 
-        val jsonText = body.let { raw ->
-            val start = raw.indexOf('{')
-            val end = raw.lastIndexOf('}')
-            if (start >= 0 && end > start) raw.substring(start, end + 1) else raw
-        }
+        val candidates = linkedMapOf<Int, String>()
 
-        val candidates = linkedMapOf<Int, String>() // quality -> url
-
+        // embedJS JSON: ua / mp4 maps
         runCatching {
-            val json = JSONObject(jsonText)
-            // ua: {"360":{"url":"..."}, "720":{"url":"..."}} or similar
+            val start = body.indexOf('{')
+            val end = body.lastIndexOf('}')
+            if (start < 0 || end <= start) return@runCatching
+            val json = JSONObject(body.substring(start, end + 1))
             listOf("ua", "mp4").forEach { key ->
                 val obj = json.optJSONObject(key) ?: return@forEach
                 obj.keys().forEach { qKey ->
@@ -77,7 +77,7 @@ class Rumble : ExtractorApi() {
                         is String -> entry
                         else -> ""
                     }.replace("\\/", "/")
-                    if (stream.startsWith("http")) {
+                    if (stream.startsWith("http") && !isJunkStreamUrl(stream)) {
                         val q = qKey.filter { it.isDigit() }.toIntOrNull()
                             ?: Regex("""(\d{3,4})""").find(stream)?.groupValues?.getOrNull(1)?.toIntOrNull()
                             ?: 0
@@ -91,12 +91,22 @@ class Rumble : ExtractorApi() {
                 ?.let { candidates[Qualities.Unknown.value] = it }
         }
 
-        // Regex fallback
-        Regex(""""(?:url|file|hls_url|hls)"\s*:\s*"(https?://[^"]+)"""")
-            .findAll(body)
+        // TESTINGCF page scrape: script contains mp4
+        val scriptData = runCatching {
+            // if body is HTML
+            if (body.contains("<script", true)) {
+                Regex("""\{"mp4[\s\S]*?"evt":\{""").find(body)?.value
+                    ?: body
+            } else body
+        }.getOrDefault(body)
+
+        Regex(""""url"\s*:\s*"(https?://[^"]+)"""")
+            .findAll(scriptData)
             .map { it.groupValues[1].replace("\\/", "/") }
+            .filter { it.contains("rumble", true) }
+            .filterNot { isJunkStreamUrl(it) }
             .forEach { stream ->
-                val q = Regex("""(\d{3,4})p?""").find(stream)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                val q = Regex("""(\d{3,4})""").find(stream)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
                 candidates.putIfAbsent(normalizePlayQuality(q), stream)
             }
 
@@ -107,19 +117,23 @@ class Rumble : ExtractorApi() {
             .forEach { (q, stream) ->
                 when {
                     stream.contains(".m3u8", true) -> {
+                        // Prefer master (may be multi-variant); no i-frame junk
                         emitHlsVariants(name, stream, mainUrl, callback)
                     }
                     else -> {
                         callback(
                             newExtractorLink(
                                 source = name,
-                                name = "$name ${qualityLabel(q)}",
+                                name = name,
                                 url = stream,
                                 type = ExtractorLinkType.VIDEO,
                             ) {
                                 this.quality = if (q > 0) q else Qualities.Unknown.value
                                 this.referer = mainUrl
-                                this.headers = mapOf("User-Agent" to ANICHIN_UA, "Referer" to mainUrl)
+                                this.headers = mapOf(
+                                    "User-Agent" to ANICHIN_UA,
+                                    "Referer" to mainUrl,
+                                )
                             }
                         )
                     }

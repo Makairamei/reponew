@@ -223,6 +223,10 @@ class Anichin : MainAPI() {
         }
 
         val countedCallback: (ExtractorLink) -> Unit = { link ->
+            if (isJunkStreamUrl(link.url, link.name)) return@countedCallback
+            // Drop bare i1/i2/i3 style names
+            val n = link.name.trim().lowercase()
+            if (n.matches(Regex("""i\d+"""))) return@countedCallback
             if (emitted.add(link.url)) callback(link)
         }
 
@@ -313,6 +317,7 @@ class Anichin : MainAPI() {
         val sourceName = cleanServerLabel(label)
         when {
             fixed.contains(".m3u8", true) -> {
+                if (isJunkStreamUrl(fixed)) return
                 emitHlsVariants(
                     source = sourceName,
                     streamUrl = fixed,
@@ -327,11 +332,12 @@ class Anichin : MainAPI() {
                 return
             }
             fixed.contains(".mp4", true) || fixed.contains(".webm", true) -> {
+                if (isJunkStreamUrl(fixed)) return
                 val q = normalizePlayQuality(directQuality)
                 callback(
                     newExtractorLink(
                         source = sourceName,
-                        name = "$sourceName ${qualityLabel(q)}",
+                        name = sourceName,
                         url = fixed,
                         type = ExtractorLinkType.VIDEO,
                     ) {

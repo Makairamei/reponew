@@ -1,7 +1,7 @@
-version = 47
+version = 48
 
 cloudstream {
-    description = "Anichin Moe — playable servers, 1080-first quality"
+    description = "Anichin Moe — DM audio, clean labels, no i1/i2 junk"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

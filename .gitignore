@@ -52,3 +52,15 @@ venv/
 *.ap_
 *.dex
 *.class
+
+# Local references / probe scratch (not shipped)
+_refs/
+probe_*.py
+ep*.html
+*.unpacked.txt
+abyss*.json
+abyss*.txt
+sr_*.html
+sr_*.txt
+mor_*.txt
+rpm.js
