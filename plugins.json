@@ -24,14 +24,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnimeSailProvider.cs3",
         "status": 1,
-        "version": 18,
+        "version": 19,
         "name": "AnimeSailProvider",
         "internalName": "AnimeSailProvider",
         "authors": [
             "sad25kag"
         ],
-        "description": "AnimeSail \u2014 Pixel from open-tab href (no iframe skip)",
-        "fileSize": 69096,
+        "description": "AnimeSail \u2014 Pixel popup decode + miiiixdrop.net",
+        "fileSize": 69894,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -41,6 +41,6 @@
         ],
         "iconUrl": "https://aghanim.xyz/wp-content/themes/animesail/assets/images/ico.png",
         "apiVersion": 1,
-        "fileHash": "sha256-fa42b0177290337b7b37f8924f2b37145e040118a8789ca7872a1aae4cdb6ca8"
+        "fileHash": "sha256-df7ae66192a43c2b4ce80a3fda90a3f0f47e3d5c84ff8c48be490096eb59204f"
     }
 ]
