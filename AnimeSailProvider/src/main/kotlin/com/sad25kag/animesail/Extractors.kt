@@ -6,16 +6,15 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
-import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-private val SAIL_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-/** Shared MixDrop family (m1xdrop / mixdrop mirrors used by AnimeSail) */
+/**
+ * MixDrop family — AnimeSail mirrors (m1xdrop / mixdrop.*).
+ * No hard playability probe (probe Range often 403 while player GET works).
+ * Always attach Referer/Origin/UA for Exo (avoids HTTP 2004).
+ */
 open class MixDropBase : ExtractorApi() {
     override var name = "MixDrop"
     override var mainUrl = "https://mixdrop.ag"
@@ -29,24 +28,15 @@ open class MixDropBase : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val embedUrl = url
-            .replace("/f/", "/e/")
-            .replace("/embed-", "/e/")
-            .let { u ->
-                // normalize host to this extractor mainUrl when same path
-                val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(u)?.groupValues?.getOrNull(1)
-                if (id != null) "$mainUrl/e/$id" else u
-            }
+        val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
+            .find(url)?.groupValues?.getOrNull(1)
+        val embedUrl = if (id != null) "$mainUrl/e/$id" else url.replace("/f/", "/e/")
 
         val response = runCatching {
             app.get(
                 embedUrl,
                 referer = referer ?: "$mainUrl/",
-                headers = mapOf(
-                    "User-Agent" to SAIL_UA,
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language" to "en-US,en;q=0.9,id;q=0.8",
-                ),
+                headers = mapOf("User-Agent" to USER_AGENT),
             )
         }.getOrNull() ?: return
 
@@ -55,9 +45,17 @@ open class MixDropBase : ExtractorApi() {
         response.document.select("script").forEach { script ->
             val data = script.data().trim()
             if (data.isBlank()) return@forEach
-            scriptChunks.add(data)
+            if (data.contains("MDCore", true) ||
+                data.contains("wurl", true) ||
+                data.contains("furl", true) ||
+                data.contains("eval(function(p,a,c,k,e,d)")
+            ) {
+                scriptChunks.add(data)
+            }
             if (data.contains("eval(function(p,a,c,k,e,d)")) {
-                runCatching { getAndUnpack(data) }.getOrNull()?.let { scriptChunks.add(it) }
+                runCatching { getAndUnpack(data) }.getOrNull()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { scriptChunks.add(it) }
             }
         }
         runCatching { getAndUnpack(response.text) }.getOrNull()?.let { scriptChunks.add(it) }
@@ -93,14 +91,9 @@ open class MixDropBase : ExtractorApi() {
                 }
             }
         }
-        if (candidates.isEmpty()) return
-
-        // Prefer first candidate that looks like CDN media; don't hard-fail on HEAD probe
-        // (probe Range can 403 while player GET works — caused "only kraken works")
-        val streamUrl = candidates.firstOrNull { it.contains(".mp4", true) || it.contains(".m3u8", true) }
-            ?: return
-
+        val streamUrl = candidates.firstOrNull() ?: return
         val type = if (streamUrl.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
         callback(
             newExtractorLink(
                 source = name,
@@ -110,9 +103,8 @@ open class MixDropBase : ExtractorApi() {
             ) {
                 this.referer = embedUrl
                 this.quality = Qualities.Unknown.value
-                // Critical headers for Exo — missing Referer/Origin → HTTP 2004 / remote errors
                 this.headers = mapOf(
-                    "User-Agent" to SAIL_UA,
+                    "User-Agent" to USER_AGENT,
                     "Referer" to embedUrl,
                     "Origin" to mainUrl,
                     "Accept" to "*/*",
@@ -126,8 +118,8 @@ class MixDropBz : MixDropBase() {
     override var mainUrl = "https://m1xdrop.bz"
 }
 
-class MixDropCom : MixDropBase() {
-    override var mainUrl = "https://mixdrop.com"
+class MixDropAg : MixDropBase() {
+    override var mainUrl = "https://mixdrop.ag"
 }
 
 class MixDropTo : MixDropBase() {
@@ -138,11 +130,11 @@ class MixDropClub : MixDropBase() {
     override var mainUrl = "https://mixdrop.club"
 }
 
-class MixDropAg : MixDropBase() {
-    override var mainUrl = "https://mixdrop.ag"
+class MixDropCom : MixDropBase() {
+    override var mainUrl = "https://mixdrop.com"
 }
 
-/** Mp4Upload family */
+/** Mp4Upload — embed player.src unpack + headers */
 open class Mp4UploadFix : ExtractorApi() {
     override var name = "Mp4Upload"
     override var mainUrl = "https://www.mp4upload.com"
@@ -169,7 +161,7 @@ open class Mp4UploadFix : ExtractorApi() {
             app.get(
                 realUrl,
                 referer = referer ?: watchReferer,
-                headers = mapOf("User-Agent" to SAIL_UA, "Referer" to (referer ?: watchReferer)),
+                headers = mapOf("User-Agent" to USER_AGENT),
             )
         }.getOrNull() ?: return
 
@@ -213,7 +205,7 @@ open class Mp4UploadFix : ExtractorApi() {
                 this.referer = watchReferer
                 this.quality = quality
                 this.headers = mapOf(
-                    "User-Agent" to SAIL_UA,
+                    "User-Agent" to USER_AGENT,
                     "Referer" to watchReferer,
                     "Origin" to mainUrl,
                     "Accept" to "*/*",
@@ -227,94 +219,7 @@ class Mp4UploadOrg : Mp4UploadFix() {
     override var mainUrl = "https://mp4upload.org"
 }
 
-/** Krakenfiles */
-open class Krakenfiles : ExtractorApi() {
-    override var name = "Kraken"
-    override var mainUrl = "https://krakenfiles.com"
-    override val requiresReferer = false
-
-    override suspend fun getUrl(
-        url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-    ) {
-        val id = Regex("""/(?:view|embed)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
-            .find(url)?.groupValues?.getOrNull(1)
-            ?: url.trimEnd('/').substringAfterLast('/')
-
-        val pageUrl = when {
-            url.contains("/embed/", true) -> url
-            id.isNotBlank() -> "$mainUrl/embed-video/$id"
-            else -> url
-        }
-
-        val doc = runCatching {
-            app.get(
-                pageUrl,
-                referer = referer ?: "$mainUrl/",
-                headers = mapOf("User-Agent" to SAIL_UA),
-            )
-        }.getOrNull() ?: return
-
-        val body = doc.text
-        val candidates = linkedSetOf<String>()
-
-        // HTML5 source / data-src-url
-        doc.document.select("source[src], video[src], [data-src-url], [data-file]").forEach { el ->
-            listOf("src", "data-src-url", "data-file").forEach { attr ->
-                el.attr(attr).takeIf { it.startsWith("http") }?.let { candidates.add(it) }
-            }
-        }
-
-        Regex("""https?://[^"'\\s<>]+\.(?:mp4|m3u8)[^"'\\s<>]*""", RegexOption.IGNORE_CASE)
-            .findAll(body)
-            .forEach { candidates.add(it.value.replace("\\/", "/")) }
-
-        Regex(""""(?:url|file|src|downloadUrl)"\s*:\s*"(https?://[^"]+)"""")
-            .findAll(body)
-            .forEach { candidates.add(it.groupValues[1].replace("\\/", "/")) }
-
-        // POST get-url pattern used by some kraken embeds
-        if (candidates.isEmpty() && id.isNotBlank()) {
-            val post = runCatching {
-                app.post(
-                    "$mainUrl/download/$id",
-                    data = mapOf("download" to "yes"),
-                    referer = pageUrl,
-                    headers = mapOf("User-Agent" to SAIL_UA, "X-Requested-With" to "XMLHttpRequest"),
-                ).text
-            }.getOrNull().orEmpty()
-            Regex("""https?://[^"'\\s<>]+\.mp4[^"'\\s<>]*""").findAll(post)
-                .forEach { candidates.add(it.value) }
-        }
-
-        candidates
-            .filter { it.contains(".mp4", true) || it.contains(".m3u8", true) }
-            .distinct()
-            .forEach { stream ->
-                val type = if (stream.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                val q = getQualityFromName(stream).takeIf { it > 0 } ?: Qualities.Unknown.value
-                callback(
-                    newExtractorLink(name, name, stream, type) {
-                        this.referer = mainUrl
-                        this.quality = q
-                        this.headers = mapOf(
-                            "User-Agent" to SAIL_UA,
-                            "Referer" to mainUrl,
-                            "Accept" to "*/*",
-                        )
-                    }
-                )
-            }
-    }
-}
-
-class KrakenfilesTo : Krakenfiles() {
-    override var mainUrl = "https://krakenfiles.to"
-}
-
-/** Pixeldrain / "Pixel" mirrors */
+/** Pixeldrain direct API file */
 class Pixeldrain : ExtractorApi() {
     override var name = "Pixel"
     override var mainUrl = "https://pixeldrain.com"
@@ -326,14 +231,13 @@ class Pixeldrain : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val id = Regex("""/(?:u|api/file)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
+        val id = Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
             .find(url)?.groupValues?.getOrNull(1)
-            ?: url.trimEnd('/').substringAfterLast('/')
+            ?: url.trimEnd('/').substringAfterLast('/').takeIf { it.length in 4..40 }
+            ?: return
 
-        if (id.isBlank()) return
-
-        // Direct download endpoint — works with proper UA
         val direct = "https://pixeldrain.com/api/file/$id"
+        val page = "https://pixeldrain.com/u/$id"
         callback(
             newExtractorLink(
                 source = name,
@@ -341,11 +245,11 @@ class Pixeldrain : ExtractorApi() {
                 url = direct,
                 type = ExtractorLinkType.VIDEO,
             ) {
-                this.referer = "https://pixeldrain.com/u/$id"
+                this.referer = page
                 this.quality = Qualities.Unknown.value
                 this.headers = mapOf(
-                    "User-Agent" to SAIL_UA,
-                    "Referer" to "https://pixeldrain.com/u/$id",
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to page,
                     "Accept" to "*/*",
                 )
             }
@@ -353,11 +257,11 @@ class Pixeldrain : ExtractorApi() {
     }
 }
 
-/** Doodstream aliases sometimes labeled Dodo on AnimeSail */
-open class DoodstreamAlias : ExtractorApi() {
-    override var name = "Dodo"
-    override var mainUrl = "https://dood.watch"
-    override val requiresReferer = true
+/** Krakenfiles — GET only (no app.post) */
+class Krakenfiles : ExtractorApi() {
+    override var name = "Kraken"
+    override var mainUrl = "https://krakenfiles.com"
+    override val requiresReferer = false
 
     override suspend fun getUrl(
         url: String,
@@ -365,48 +269,38 @@ open class DoodstreamAlias : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        // Reuse CloudStream built-in dood path via loadExtractor if possible — else minimal pass
-        val id = Regex("""/(?:e|d)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
-            .find(url)?.groupValues?.getOrNull(1) ?: return
-
-        val embed = "$mainUrl/e/$id"
         val page = runCatching {
-            app.get(embed, referer = referer ?: mainUrl, headers = mapOf("User-Agent" to SAIL_UA)).text
-        }.getOrNull() ?: return
-
-        // pass_md5 pattern
-        val pass = Regex("""/pass_md5/([^"'\\s]+)""").find(page)?.groupValues?.getOrNull(1) ?: return
-        val tokenUrl = "$mainUrl/pass_md5/$pass"
-        val token = runCatching {
             app.get(
-                tokenUrl,
-                referer = embed,
-                headers = mapOf("User-Agent" to SAIL_UA, "Referer" to embed),
-            ).text.trim()
+                url,
+                referer = referer ?: "$mainUrl/",
+                headers = mapOf("User-Agent" to USER_AGENT),
+            )
         }.getOrNull() ?: return
 
-        if (!token.startsWith("http")) return
-        // dood appends random + expiry
-        val final = token + "z" + (System.currentTimeMillis() / 1000 + 3600)
-        // Actually standard: token already full url base; append ?token= from page
-        val t = Regex("""token=([A-Za-z0-9]+)""").find(page)?.groupValues?.getOrNull(1)
-        val stream = if (t != null && !token.contains("?")) "$token?token=$t&expiry=${System.currentTimeMillis()}"
-        else token
-
-        callback(
-            newExtractorLink(name, name, stream, ExtractorLinkType.VIDEO) {
-                this.referer = embed
-                this.quality = Qualities.Unknown.value
-                this.headers = mapOf(
-                    "User-Agent" to SAIL_UA,
-                    "Referer" to embed,
-                    "Accept" to "*/*",
-                )
+        val body = page.text
+        val candidates = linkedSetOf<String>()
+        page.document.select("source[src], video[src], [data-src-url]").forEach { el ->
+            listOf("src", "data-src-url").forEach { a ->
+                el.attr(a).takeIf { it.startsWith("http") }?.let { candidates.add(it) }
             }
-        )
-    }
-}
+        }
+        Regex("""https?://[^"'\\\s<>]+\.(?:mp4|m3u8)[^"'\\\s<>]*""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .forEach { candidates.add(it.value.replace("\\/", "/")) }
 
-class DoodstreamWs : DoodstreamAlias() {
-    override var mainUrl = "https://dood.ws"
+        candidates.forEach { stream ->
+            val type = if (stream.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            callback(
+                newExtractorLink(name, name, stream, type) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to mainUrl,
+                        "Accept" to "*/*",
+                    )
+                }
+            )
+        }
+    }
 }

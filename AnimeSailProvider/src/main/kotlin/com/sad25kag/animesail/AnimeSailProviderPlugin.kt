@@ -7,21 +7,17 @@ import com.lagradost.cloudstream3.plugins.Plugin
 @CloudstreamPlugin
 class AnimeSailProviderPlugin : Plugin() {
     override fun load(context: Context) {
-        // Main site (Cloudflare Turnstile + mirrors)
         registerMainAPI(AnimeSailProvider())
 
-        // Host extractors used by AnimeSail mirrors
+        // Must register — otherwise only built-in hosts (e.g. Kraken) appear
         registerExtractorAPI(MixDropBz())
-        registerExtractorAPI(MixDropCom())
+        registerExtractorAPI(MixDropAg())
         registerExtractorAPI(MixDropTo())
         registerExtractorAPI(MixDropClub())
-        registerExtractorAPI(MixDropAg())
+        registerExtractorAPI(MixDropCom())
         registerExtractorAPI(Mp4UploadFix())
         registerExtractorAPI(Mp4UploadOrg())
-        registerExtractorAPI(Krakenfiles())
-        registerExtractorAPI(KrakenfilesTo())
         registerExtractorAPI(Pixeldrain())
-        registerExtractorAPI(DoodstreamAlias())
-        registerExtractorAPI(DoodstreamWs())
+        registerExtractorAPI(Krakenfiles())
     }
 }
