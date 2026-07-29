@@ -24,14 +24,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnimeSailProvider.cs3",
         "status": 1,
-        "version": 14,
+        "version": 15,
         "name": "AnimeSailProvider",
         "internalName": "AnimeSailProvider",
         "authors": [
             "sad25kag"
         ],
-        "description": "AnimeSail \u2014 Dodo (Dood) + Lokal CF player fix",
-        "fileSize": 63141,
+        "description": "AnimeSail \u2014 1x Dodo, Pixel direct, Lokal CF retry",
+        "fileSize": 64521,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -41,6 +41,6 @@
         ],
         "iconUrl": "https://aghanim.xyz/wp-content/themes/animesail/assets/images/ico.png",
         "apiVersion": 1,
-        "fileHash": "sha256-3ef812079732239c9aa9d0ac668f667ecabfc55da449c258ef63eff5fc2a800b"
+        "fileHash": "sha256-fc4788de7a78f3cde03520908adb4b057f058b81eef018587eb72981ce227117"
     }
 ]
