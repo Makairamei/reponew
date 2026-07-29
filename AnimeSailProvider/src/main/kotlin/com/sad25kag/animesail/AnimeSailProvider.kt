@@ -363,21 +363,27 @@ class AnimeSailProvider : MainAPI() {
                             emitDirectMedia(serverName, iframe, mirrorQuality, mainUrl, safeCallback)
                         }
 
-                        iframe.contains("${playerPath}popup") || iframe.contains("popup.php") ||
-                            iframe.contains("popup?", true) -> {
-                            val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
+                        // popup on mainUrl OR v1.animesail.xyz (Pixel/Buzi live here)
+                        iframe.contains("popup") && (iframe.contains("utils/player") || iframe.contains("url=")) -> {
+                            val rawQ = iframe.replace("&#038;", "&").replace("&amp;", "&")
+                            val encodedUrl = rawQ.substringAfter("url=").substringBefore("&")
                             if (encodedUrl.isNotBlank()) {
                                 val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
                                 when {
                                     realUrl.contains("pixeldrain", true) ->
                                         loadFixedExtractor(realUrl, "Pixel", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
-                                    realUrl.contains("mixdrop", true) || realUrl.contains("m1xdrop", true) ->
+                                    realUrl.contains("mixdrop", true) || realUrl.contains("m1xdrop", true) ||
+                                        realUrl.contains("miiiixdrop", true) ->
                                         loadFixedExtractor(realUrl, "MixDrop", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                                     realUrl.contains("dood", true) || realUrl.contains("rasa-cintaku", true) ||
                                         realUrl.contains("doply", true) || realUrl.contains("vide0", true) -> {
                                         val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(realUrl)?.groupValues?.getOrNull(1)
                                         if (id != null) resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
                                         else loadFixedExtractor(realUrl, "Dodo", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
+                                    }
+                                    realUrl.contains("buzzheavier", true) -> {
+                                        // Buzi — open-tab host; skip inventing stream if no direct
+                                        loadFixedExtractor(realUrl, "Buzi", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                                     }
                                     else -> loadFixedExtractor(realUrl, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                                 }
@@ -726,11 +732,12 @@ class AnimeSailProvider : MainAPI() {
         }
 
         
-        // MixDrop domain hop only
-        if (fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true)) {
+        // MixDrop domain hop (includes miiiixdrop.net used by AnimeSail 2026)
+        if (fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true) || fixed.contains("miiiixdrop", true)) {
             val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
             if (id != null) {
                 listOf(
+                    "https://miiiixdrop.net/e/$id",
                     "https://m1xdrop.bz/e/$id",
                     "https://mixdrop.ag/e/$id",
                     "https://mixdrop.to/e/$id",

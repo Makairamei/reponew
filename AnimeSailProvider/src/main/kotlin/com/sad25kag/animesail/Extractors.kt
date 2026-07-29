@@ -136,6 +136,15 @@ class MixDropSi : MixDropBase() {
     override var mainUrl = "https://mixdrop.si"
 }
 
+/** Current AnimeSail MixDrop mirror host (2026). */
+class MixDropMiiiix : MixDropBase() {
+    override var mainUrl = "https://miiiixdrop.net"
+}
+
+class MixDropNet : MixDropBase() {
+    override var mainUrl = "https://mixdrop.net"
+}
+
 /** Mp4Upload */
 open class Mp4UploadFix : ExtractorApi() {
     override var name = "Mp4Upload"
@@ -288,15 +297,33 @@ open class Pixeldrain : ExtractorApi() {
     }
 
     companion object {
+        /**
+         * AnimeSail wraps Pixel as popup:
+         * `…/popup/?url=https%3A%2F%2Fpixeldrain.com%2Fu%2F{id}&token=…`
+         * Must URL-decode before matching `/u/{id}`.
+         */
         fun extractPixelId(url: String): String? {
-            return Regex("""pixeldrain\.com/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
-                .find(url)?.groupValues?.getOrNull(1)
+            var u = url.trim()
+            // Decode repeatedly (popup may be double-encoded / &#038;)
+            repeat(3) {
+                u = u.replace("&#038;", "&").replace("&amp;", "&")
+                val dec = runCatching { java.net.URLDecoder.decode(u, "UTF-8") }.getOrNull()
+                if (dec != null && dec != u) u = dec else return@repeat
+            }
+            // If still a popup wrapper, pull nested url=
+            if (u.contains("url=", true) && u.contains("pixeldrain", true)) {
+                val nested = u.substringAfter("url=", "").substringBefore("&").trim()
+                if (nested.isNotBlank()) {
+                    u = runCatching { java.net.URLDecoder.decode(nested, "UTF-8") }.getOrDefault(nested)
+                }
+            }
+            return Regex(
+                """pixeldrain\.com/(?:u|api/file)/([A-Za-z0-9_-]+)""",
+                RegexOption.IGNORE_CASE,
+            ).find(u)?.groupValues?.getOrNull(1)
                 ?: Regex("""/(?:u|api/file)/([A-Za-z0-9_-]+)""", RegexOption.IGNORE_CASE)
-                    .find(url)?.groupValues?.getOrNull(1)
-                    ?.takeIf { url.contains("pixel", true) }
-                ?: url.trimEnd('/').substringAfterLast('/')
-                    .takeIf { it.matches(Regex("""[A-Za-z0-9_-]{6,40}""")) && !it.contains('.') }
-                    ?.takeIf { url.contains("pixeldrain", true) || url.contains("/u/", true) }
+                    .find(u)?.groupValues?.getOrNull(1)
+                    ?.takeIf { u.contains("pixel", true) }
         }
 
         /** Build in-app playable link (shared by provider loadLinks). */
@@ -388,6 +415,7 @@ class DoodStreamSail : ExtractorApi() {
             preferredHost?.let { add(it.trimEnd('/')) }
             addAll(
                 listOf(
+                    "https://doply.net",
                     "https://dood.watch",
                     "https://dood.ws",
                     "https://dood.li",
