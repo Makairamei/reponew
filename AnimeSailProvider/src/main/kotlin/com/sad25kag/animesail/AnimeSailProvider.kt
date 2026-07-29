@@ -277,20 +277,87 @@ class AnimeSailProvider : MainAPI() {
                     if (encodedData.isBlank() || encodedData.equals("0") || encodedData.length < 8) return@safeApiCall
 
                     val decodedHtml = runCatching { base64Decode(encodedData) }.getOrNull() ?: return@safeApiCall
-                    val iframe = fixUrl(
-                        Jsoup.parse(decodedHtml)
-                            .select("iframe[src], embed[src], source[src], video[src]")
-                            .firstOrNull()
-                            ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-                            .orEmpty()
-                    )
-                    if (iframe.contains("statistic") || iframe.isBlank()) return@safeApiCall
-
                     val rawText = element.text().trim()
                     val mirrorQuality = getIndexQuality(rawText)
                     val serverName = cleanMirrorName(rawText)
 
+                    // Web "Buka di Tab Baru" for Pixel = NO iframe — only <a href="https://pixeldrain.com/u/ID">.
+                    // Old code required iframe src → Pixel mirror was skipped entirely (gak muncul di CS).
+                    val doc = Jsoup.parse(decodedHtml)
+                    val iframe = fixUrl(
+                        doc.select("iframe[src], embed[src], source[src], video[src]")
+                            .firstOrNull()
+                            ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+                            .orEmpty()
+                    )
+                    val hrefs = linkedSetOf<String>()
+                    doc.select("a[href], button[data-href], [data-url], [data-src], [data-link]").forEach { el ->
+                        listOf("href", "data-href", "data-url", "data-src", "data-link").forEach { a ->
+                            el.attr(a).takeIf { it.startsWith("http") || it.startsWith("//") }?.let {
+                                hrefs.add(if (it.startsWith("//")) "https:$it" else it)
+                            }
+                        }
+                    }
+                    // Any absolute host URL buried in the base64 blob
+                    Regex("""https?://[^\s"'<>\\]+""", RegexOption.IGNORE_CASE).findAll(decodedHtml).forEach {
+                        hrefs.add(it.value.replace("&amp;", "&").trimEnd('\\', '"', '\'', ')'))
+                    }
+                    if (iframe.isNotBlank()) hrefs.add(iframe)
+
+                    // Prefer real host URLs over empty/statistic iframe
+                    val pixelHit = hrefs.firstOrNull { it.contains("pixeldrain", true) }
+                    val mixHit = hrefs.firstOrNull {
+                        it.contains("mixdrop", true) || it.contains("m1xdrop", true)
+                    }
+                    val doodHit = hrefs.firstOrNull {
+                        it.contains("dood", true) || it.contains("doply", true) ||
+                            it.contains("vide0", true) || it.contains("rasa-cintaku", true) ||
+                            it.contains("myvidplay", true) || it.contains("d000d", true)
+                    }
+
                     when {
+                        // PIXEL first — even when iframe blank (web open-tab only)
+                        pixelHit != null || serverName.contains("pixel", true) -> {
+                            val target = pixelHit
+                                ?: hrefs.firstOrNull { Pixeldrain.extractPixelId(it) != null }
+                                ?: iframe.takeIf { it.isNotBlank() }
+                            if (!target.isNullOrBlank()) {
+                                loadFixedExtractor(
+                                    target, "Pixel",
+                                    mirrorQuality.takeIf { it > 0 } ?: Qualities.P1080.value,
+                                    mainUrl, subtitleCallback, safeCallback
+                                )
+                            } else {
+                                // Label says Pixel but no URL in blob — still try scan whole blob id-like
+                                val idGuess = Regex("""(?:pixeldrain\.com/(?:u|api/file)/|/)([A-Za-z0-9_-]{6,20})""")
+                                    .find(decodedHtml)?.groupValues?.getOrNull(1)
+                                if (!idGuess.isNullOrBlank()) {
+                                    loadFixedExtractor(
+                                        Pixeldrain.pageUrl(idGuess), "Pixel",
+                                        Qualities.P1080.value, mainUrl, subtitleCallback, safeCallback
+                                    )
+                                }
+                            }
+                        }
+
+                        mixHit != null || serverName.contains("mix", true) -> {
+                            val target = mixHit ?: iframe
+                            if (target.isNotBlank() && !target.contains("statistic")) {
+                                loadFixedExtractor(target, "MixDrop", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                            }
+                        }
+
+                        doodHit != null || serverName.contains("dodo", true) -> {
+                            val target = doodHit ?: iframe
+                            val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(target)?.groupValues?.getOrNull(1)
+                                ?: iframe.substringAfter("id=").substringBefore("&").takeIf { it.isNotBlank() }
+                            if (!id.isNullOrBlank()) {
+                                resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
+                            } else if (target.isNotBlank()) {
+                                loadFixedExtractor(target, "Dodo", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
+                            }
+                        }
+
                         iframe.endsWith(".mp4", true) || iframe.endsWith(".m3u8", true) ||
                             iframe.contains(".mp4?", true) || iframe.contains(".m3u8?", true) -> {
                             emitDirectMedia(serverName, iframe, mirrorQuality, mainUrl, safeCallback)
@@ -301,12 +368,11 @@ class AnimeSailProvider : MainAPI() {
                             val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
                             if (encodedUrl.isNotBlank()) {
                                 val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                                // Route by host even when label is generic "Server"
                                 when {
-                                    realUrl.contains("pixeldrain", true) || realUrl.contains("pixeldrain.to", true) ->
+                                    realUrl.contains("pixeldrain", true) ->
                                         loadFixedExtractor(realUrl, "Pixel", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                                     realUrl.contains("mixdrop", true) || realUrl.contains("m1xdrop", true) ->
-                                        loadFixedExtractor(realUrl, if (serverName.contains("mix", true)) serverName else "MixDrop", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                                        loadFixedExtractor(realUrl, "MixDrop", mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                                     realUrl.contains("dood", true) || realUrl.contains("rasa-cintaku", true) ||
                                         realUrl.contains("doply", true) || realUrl.contains("vide0", true) -> {
                                         val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(realUrl)?.groupValues?.getOrNull(1)
@@ -330,39 +396,29 @@ class AnimeSailProvider : MainAPI() {
                             parseInnerPlayer(page, iframe, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                         }
 
-                        // Dodo: redirect id → resolve ONCE (no 8× spam). Ignore fake 1080 mirror label.
                         iframe.contains("/tools/redirect/") || iframe.contains("aghanim.xyz/tools/redirect/") -> {
                             val id = iframe.substringAfter("id=").substringBefore("&").trim()
-                            if (id.isNotBlank()) {
-                                resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
-                            }
+                            if (id.isNotBlank()) resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
                         }
 
-                        // Pixeldrain
-                        iframe.contains("pixeldrain", true) || serverName.contains("pixel", true) -> {
-                            loadFixedExtractor(iframe, "Pixel", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
-                        }
-
-                        // Lokal / site player (CF Turnstile)
                         iframe.contains(playerPath) || iframe.contains("/utils/player") ||
                             (iframe.contains(mainUrl) && (iframe.contains("player") || iframe.contains("embed"))) -> {
                             resolveSitePlayer(iframe, data, serverName, mirrorQuality, safeCallback)
                         }
 
-                        serverName.contains("dodo", true) || iframe.contains("dood", true) ||
-                            iframe.contains("doply", true) || iframe.contains("vide0", true) ||
-                            iframe.contains("rasa-cintaku", true) -> {
-                            val id = Regex("""/(?:e|d|v)/([A-Za-z0-9]+)""").find(iframe)?.groupValues?.getOrNull(1)
-                            if (id != null) {
-                                resolveDodoOnce(id, mainUrl, subtitleCallback, safeCallback)
-                            } else {
-                                // Single loadExtractor call — DoodStreamSail emits one link
-                                loadFixedExtractor(iframe, "Dodo", Qualities.Unknown.value, mainUrl, subtitleCallback, safeCallback)
-                            }
+                        iframe.isNotBlank() && !iframe.contains("statistic") -> {
+                            loadFixedExtractor(iframe, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
                         }
 
+                        // Last resort: any http link in blob
                         else -> {
-                            loadFixedExtractor(iframe, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                            val any = hrefs.firstOrNull {
+                                !it.contains("statistic") && !it.contains("facebook") &&
+                                    !it.contains("twitter") && it.startsWith("http")
+                            }
+                            if (!any.isNullOrBlank()) {
+                                loadFixedExtractor(any, serverName, mirrorQuality, mainUrl, subtitleCallback, safeCallback)
+                            }
                         }
                     }
                 }

@@ -1,9 +1,9 @@
 // use an integer for version numbers
-version = 17
+version = 18
 
 cloudstream {
     language = "id"
-    description = "AnimeSail — Pixel /api/file stream (no open-tab), MixDrop/Dodo"
+    description = "AnimeSail — Pixel from open-tab href (no iframe skip)"
     authors = listOf("sad25kag")
     status = 1
     tvTypes = listOf(
