@@ -2,14 +2,14 @@
     {
         "url": "https://raw.githubusercontent.com/Makairamei/reponew/builds/AnichinMoe.cs3",
         "status": 1,
-        "version": 48,
+        "version": 49,
         "name": "AnichinMoe",
         "internalName": "AnichinMoe",
         "authors": [
             "sad25kag"
         ],
-        "description": "Anichin Moe \u2014 DM audio, clean labels, no i1/i2 junk",
-        "fileSize": 98531,
+        "description": "Anichin Moe \u2014 DM master-only audio, Rumble DNS, full servers",
+        "fileSize": 96794,
         "repositoryUrl": "https://github.com/Makairamei/reponew",
         "language": "id",
         "tvTypes": [
@@ -19,6 +19,6 @@
         ],
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://anichin.club&size=%size%",
         "apiVersion": 1,
-        "fileHash": "sha256-981920f7739f212fa92ffbfd157d48c787007813aac4b0516d4cc73e418213c8"
+        "fileHash": "sha256-39f21dcc8bc4ac98ffba6d5dca39ff2d271b43ab5242053f35d306de1a335eb1"
     }
 ]
