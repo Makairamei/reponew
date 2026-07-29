@@ -1,7 +1,7 @@
-version = 48
+version = 49
 
 cloudstream {
-    description = "Anichin Moe — DM audio, clean labels, no i1/i2 junk"
+    description = "Anichin Moe — DM master-only audio, Rumble DNS, full servers"
     language = "id"
     authors = listOf("sad25kag")
     status = 1

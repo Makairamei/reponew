@@ -224,9 +224,20 @@ class Anichin : MainAPI() {
 
         val countedCallback: (ExtractorLink) -> Unit = fun(link: ExtractorLink) {
             if (isJunkStreamUrl(link.url, link.name)) return
-            // Drop bare i1/i2/i3 style names
             val n = link.name.trim().lowercase()
             if (n.matches(Regex("""i\d+"""))) return
+
+            // Dailymotion: keep ONLY the adaptive master (Unknown quality, plain name).
+            // Any "Dailymotion 1080p/720p/…" quality leaf is video-only → silent → drop.
+            val src = link.source.trim().lowercase()
+            if (src.contains("dailymotion") || n.contains("dailymotion") || isAudioSeparateMasterHost(link.url)) {
+                val q = link.quality
+                if (q != Qualities.Unknown.value && q > 0) return
+                if (n.contains("1080") || n.contains("720") || n.contains("480") ||
+                    n.contains("360") || n.contains("240") || Regex("""\d{3,4}p""").containsMatchIn(n)
+                ) return
+            }
+
             if (emitted.add(link.url)) callback(link)
         }
 
@@ -318,6 +329,23 @@ class Anichin : MainAPI() {
         when {
             fixed.contains(".m3u8", true) -> {
                 if (isJunkStreamUrl(fixed)) return
+                // Dailymotion masters must stay master-only (sound). Never expand to silent 1080p leaves.
+                if (isAudioSeparateMasterHost(fixed) || sourceName.contains("Dailymotion", true)) {
+                    emitHlsVariants(
+                        source = "Dailymotion",
+                        streamUrl = fixed,
+                        referer = "https://geo.dailymotion.com/player/x95ee.html",
+                        callback = callback,
+                        headers = mapOf(
+                            "User-Agent" to USER_AGENT,
+                            "Referer" to "https://geo.dailymotion.com/player/x95ee.html",
+                            "Origin" to "https://www.dailymotion.com",
+                            "Accept" to "*/*",
+                        ),
+                        masterOnly = true,
+                    )
+                    return
+                }
                 emitHlsVariants(
                     source = sourceName,
                     streamUrl = fixed,
@@ -615,17 +643,17 @@ class Anichin : MainAPI() {
 
     private fun candidatePriority(url: String, label: String): Int {
         val value = "$label $url".lowercase()
-        // Prefer direct multi-quality hosts first
+        // Prefer reliable playable hosts first (Rumble DNS often needs early attempt)
         return when {
-            value.contains("turbovidhls") || value.contains("turboviplay") -> 0
+            value.contains("rumble.com") || value.contains("rumble") -> 0
             value.contains("streamruby") || value.contains("rubyvidhub") -> 1
-            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 2
-            value.contains("ok.ru") || value.contains("odnoklassniki.ru") || value.contains("anichin-player") -> 3
-            value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 4
-            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 5
-            value.contains("abyssplayer") || value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 6
-            value.contains("vidguard") -> 7
-            value.contains("rumble.com") -> 8
+            value.contains("ok.ru") || value.contains("odnoklassniki.ru") || value.contains("anichin-player") -> 2
+            value.contains("dailymotion.com") || value.contains("geo.dailymotion.com") || value.contains("dai.ly") -> 3
+            value.contains("turbovidhls") || value.contains("turboviplay") -> 4
+            value.contains("morencius") || value.contains("earnvids") || value.contains("vidhide") -> 5
+            value.contains("rpmshare") || value.contains("rpmvid") || value.contains("rpmplay") -> 6
+            value.contains("abyssplayer") || value.contains("newplayr") || value.contains("streamhg") || value.contains("streamwish") -> 7
+            value.contains("vidguard") -> 8
             value.contains("dood") || value.contains("playmogo") -> 9
             value.contains("blogger") || value.contains("blogspot") || value.contains("google") -> 10
             else -> 12

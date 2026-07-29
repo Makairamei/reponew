@@ -16,13 +16,10 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
- * Dailymotion — aligned with TESTINGCF/DailymotionProvider for working audio.
+ * Dailymotion — **one** playable master link with sound.
  *
- * Why silent before:
- * DM masters use separate EXT-X-MEDIA AUDIO groups. Expanding to video-only leaves
- * (generateM3u8) drops audio on many CloudStream/Exo builds.
- *
- * Fix: emit the **master** m3u8 only, with geo player embed referer (player x95ee).
+ * Never emit quality-expanded leaves (those become silent "Dailymotion 1080p").
+ * Referer = geo player x95ee (TESTINGCF / Betbet working path).
  */
 class Geodailymotion : Dailymotion() {
     override var name = "Dailymotion"
@@ -36,7 +33,7 @@ open class Dailymotion : ExtractorApi() {
 
     private val baseUrl = "https://www.dailymotion.com"
     private val geoBaseUrl = "https://geo.dailymotion.com"
-    private val defaultPlayerId = "x95ee" // TESTINGCF DailymotionProvider
+    private val defaultPlayerId = "x95ee"
     private val videoIdRegex = "^[kx][a-zA-Z0-9]+$".toRegex()
 
     override suspend fun getUrl(
@@ -45,6 +42,13 @@ open class Dailymotion : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        // If caller already passed a DM master m3u8, emit once — do not expand
+        if (url.contains(".m3u8", true) && isAudioSeparateMasterHost(url)) {
+            val id = getVideoId(url) ?: getGeoAccessId(url) ?: "x"
+            emitMasterOnly(url, id, callback)
+            return
+        }
+
         val id = getVideoId(url)
             ?: getGeoAccessId(url)
             ?: Regex("""(?:video[=/]|url=)([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
@@ -83,13 +87,10 @@ open class Dailymotion : ExtractorApi() {
 
         val json = runCatching { JSONObject(response) }.getOrNull() ?: return false
         emitSubtitles(json, subtitleCallback)
-        val urls = extractQualityUrls(json)
-        if (urls.isNotEmpty()) {
-            urls.forEach { emitMaster(it, accessId, callback) }
-            return true
-        }
-        val canonicalId = json.optString("id").trim().takeIf { it.matches(videoIdRegex) } ?: return false
-        return resolveMetadataVideo(canonicalId, referer, subtitleCallback, callback)
+        val master = extractAutoMaster(json) ?: return false
+        val canonicalId = json.optString("id").trim().takeIf { it.matches(videoIdRegex) } ?: accessId
+        emitMasterOnly(master, canonicalId, callback)
+        return true
     }
 
     private suspend fun resolveMetadataVideo(
@@ -114,54 +115,44 @@ open class Dailymotion : ExtractorApi() {
         }.getOrNull() ?: return false
 
         val json = runCatching { JSONObject(response) }.getOrNull()
-        val urls = if (json != null) {
-            emitSubtitles(json, subtitleCallback)
-            extractQualityUrls(json)
-        } else {
-            Regex(""""url"\s*:\s*"([^"]+)"""")
-                .findAll(response)
-                .map { it.groupValues[1].replace("\\/", "/") }
-                .filter { it.contains(".m3u8", true) }
-                .distinct()
-                .toList()
+        if (json != null) emitSubtitles(json, subtitleCallback)
+
+        val master = when {
+            json != null -> extractAutoMaster(json)
+            else -> Regex(""""url"\s*:\s*"([^"]+\.m3u8[^"]*)"""")
+                .find(response)?.groupValues?.getOrNull(1)?.replace("\\/", "/")
         }
 
         val canonical = json?.optString("id")?.trim().orEmpty()
-        if (urls.isEmpty() && canonical.isNotBlank() && canonical != id && canonical.matches(videoIdRegex)) {
+        if (master.isNullOrBlank() && canonical.isNotBlank() && canonical != id && canonical.matches(videoIdRegex)) {
             return resolveMetadataVideo(canonical, referer, subtitleCallback, callback)
         }
+        if (master.isNullOrBlank()) return false
 
         val playId = canonical.takeIf { it.matches(videoIdRegex) } ?: id
-        // Prefer "auto" master only (first url from extract order)
-        urls.firstOrNull()?.let { emitMaster(it, playId, callback) }
-        return urls.isNotEmpty()
+        emitMasterOnly(master, playId, callback)
+        return true
     }
 
-    private fun extractQualityUrls(json: JSONObject): List<String> {
-        val urls = linkedSetOf<String>()
-        val qualities = json.optJSONObject("qualities") ?: return emptyList()
-        val keys = mutableListOf<String>()
-        if (qualities.has("auto")) keys.add("auto")
-        qualities.keys().forEach { k -> if (k != "auto") keys.add(k) }
-        keys.forEach { quality ->
-            val entries = qualities.optJSONArray(quality) ?: return@forEach
-            for (index in 0 until entries.length()) {
-                val item = entries.optJSONObject(index) ?: continue
-                val type = item.optString("type").lowercase()
-                val url = item.optString("url").trim().replace("\\/", "/")
-                    .takeIf { it.isNotBlank() } ?: continue
-                if (type.contains("mpegurl") || type.contains("x-mpegurl") || url.contains(".m3u8", true)) {
-                    urls.add(url)
-                }
+    /** Only the "auto" HLS master — never discrete quality keys that become silent leaves. */
+    private fun extractAutoMaster(json: JSONObject): String? {
+        val qualities = json.optJSONObject("qualities") ?: return null
+        val auto = qualities.optJSONArray("auto") ?: return null
+        for (i in 0 until auto.length()) {
+            val item = auto.optJSONObject(i) ?: continue
+            val type = item.optString("type").lowercase()
+            val url = item.optString("url").trim().replace("\\/", "/")
+            if (url.isBlank()) continue
+            if (type.contains("mpegurl") || type.contains("x-mpegurl") || url.contains(".m3u8", true)) {
+                return url
             }
         }
-        return urls.toList()
+        return null
     }
 
     private suspend fun emitSubtitles(json: JSONObject, subtitleCallback: (SubtitleFile) -> Unit) {
         val subtitles = json.optJSONObject("subtitles") ?: return
-        val langs = subtitles.keys().asSequence().toList()
-        for (lang in langs) {
+        for (lang in subtitles.keys().asSequence().toList()) {
             val value = subtitles.opt(lang)
             val entries = when (value) {
                 is JSONArray -> value
@@ -175,15 +166,11 @@ open class Dailymotion : ExtractorApi() {
                 if (urlsArr != null) {
                     for (urlIndex in 0 until urlsArr.length()) {
                         val subUrl = urlsArr.optString(urlIndex).trim()
-                        if (subUrl.isNotBlank()) {
-                            subtitleCallback(newSubtitleFile(label, subUrl))
-                        }
+                        if (subUrl.isNotBlank()) subtitleCallback(newSubtitleFile(label, subUrl))
                     }
                 } else {
                     val subUrl = item.optString("url").trim()
-                    if (subUrl.isNotBlank()) {
-                        subtitleCallback(newSubtitleFile(label, subUrl))
-                    }
+                    if (subUrl.isNotBlank()) subtitleCallback(newSubtitleFile(label, subUrl))
                 }
             }
         }
@@ -211,8 +198,12 @@ open class Dailymotion : ExtractorApi() {
         return if (id.matches(videoIdRegex)) id else null
     }
 
-    /** Single master playlist — keeps AUDIO groups (sound). */
-    private suspend fun emitMaster(streamLink: String, videoId: String, callback: (ExtractorLink) -> Unit) {
+    /** Exactly one link named "Dailymotion" — adaptive master with AUDIO. */
+    private suspend fun emitMasterOnly(
+        streamLink: String,
+        videoId: String,
+        callback: (ExtractorLink) -> Unit,
+    ) {
         val embedUrl = playerEmbedUrl(videoId)
         callback(
             newExtractorLink(
@@ -222,7 +213,6 @@ open class Dailymotion : ExtractorApi() {
                 type = ExtractorLinkType.M3U8,
             ) {
                 this.referer = embedUrl
-                // Unknown → player adaptive; avoids fake multi-quality silent leaves
                 this.quality = Qualities.Unknown.value
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
