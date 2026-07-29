@@ -1,0 +1,663 @@
+package com.sad25kag.animesail
+
+import java.net.URLEncoder
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.toNewSearchResponseList
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addKitsuId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
+import com.lagradost.cloudstream3.mvvm.safeApiCall
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.nicehttp.NiceResponse
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+
+class AnimeSailProvider : MainAPI() {
+    override var mainUrl = "https://154.26.137.28"
+    override var name = "AnimeSail"
+    override val hasMainPage = true
+    override var lang = "id"
+    override val hasDownloadSupport = true
+
+    override val supportedTypes = setOf(
+        TvType.Anime,
+        TvType.AnimeMovie,
+        TvType.OVA
+    )
+
+    companion object {
+        private val mapper: ObjectMapper by lazy {
+            ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+        }
+
+        fun getType(t: String): TvType {
+            return if (t.contains("OVA", true) || t.contains("Special")) TvType.OVA
+            else if (t.contains("Movie", true)) TvType.AnimeMovie
+            else TvType.Anime
+        }
+
+        fun getStatus(t: String): ShowStatus {
+            return when (t) {
+                "Completed" -> ShowStatus.Completed
+                "Ongoing" -> ShowStatus.Ongoing
+                else -> ShowStatus.Completed
+            }
+        }
+    }
+
+    private val turnstileInterceptor = TurnstileInterceptor("_as_turnstile")
+
+    private suspend fun request(url: String, ref: String? = null): NiceResponse {
+        return app.get(
+            url,
+            interceptor = turnstileInterceptor,
+            headers = mapOf(
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+            ),
+            referer = ref
+        )
+    }
+
+    override val mainPage = mainPageOf(
+        "$mainUrl/rilisan-anime-terbaru/page/" to "Anime Terbaru",
+        "$mainUrl/rilisan-donghua-terbaru/page/" to "Donghua Terbaru",
+        "$mainUrl/movie-terbaru/page/" to "Movie Terbaru"
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val document = request(request.data + page).document
+        val home = document.select("article").map {
+            it.toSearchResult()
+        }
+        return newHomePageResponse(request.name, home)
+    }
+
+    private fun getProperAnimeLink(uri: String): String {
+        return if (uri.contains("/anime/")) {
+            uri
+        } else {
+            var title = uri.substringAfter("$mainUrl/")
+            title = when {
+                (title.contains("-episode")) && !(title.contains("-movie")) -> title.substringBefore("-episode")
+                (title.contains("-movie")) -> title.substringBefore("-movie")
+                else -> title
+            }
+            "$mainUrl/anime/$title"
+        }
+    }
+
+    private fun Element.toSearchResult(): AnimeSearchResponse {
+        val rawHref = fixUrlNull(this.selectFirst("a")?.attr("href")).toString()
+        val href = getProperAnimeLink(rawHref)
+
+        val rawTitle = this.selectFirst(".tt > h2")?.text() ?: ""
+
+        val title = rawTitle.replace(Regex("(?i)Episode\\s?\\d+"), "")
+            .replace(Regex("(?i)Subtitle Indonesia"), "")
+            .replace(Regex("(?i)Sub Indo"), "")
+            .trim()
+            .removeSuffix("-")
+            .trim()
+
+        val posterUrl = fixUrlNull(this.selectFirst("div.limit img")?.attr("src"))
+
+        val epNum = Regex("(?i)Episode\\s?(\\d+)").find(rawTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+        val typeText = this.selectFirst(".tt > span")?.text() ?: ""
+        val type = if (typeText.contains("Movie", ignoreCase = true)) TvType.AnimeMovie else TvType.Anime
+
+        return newAnimeSearchResponse(title, href, type) {
+            this.posterUrl = posterUrl
+            addSub(epNum)
+        }
+    }
+
+    override suspend fun search(query: String, page: Int): SearchResponseList? {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+
+        val link = if (page <= 1) {
+            "$mainUrl/?s=$encodedQuery"
+        } else {
+            "$mainUrl/page/$page/?s=$encodedQuery"
+        }
+
+        val document = request(link).document
+
+        val results = document.select("div.listupd article").map {
+            it.toSearchResult()
+        }
+
+        val hasNext = document.selectFirst(
+            "a.next, a.next.page-numbers, .pagination .next"
+        ) != null
+
+        return results.toNewSearchResponseList(
+            hasNext = hasNext
+        )
+    }
+
+    override suspend fun load(url: String): LoadResponse {
+        val document = request(url).document
+
+        val title = document.selectFirst("h1.entry-title")?.text().toString()
+            .replace("Subtitle Indonesia", "").trim()
+        val poster = document.selectFirst("div.entry-content > img")?.attr("src")
+        val type = getType(document.select("tbody th:contains(Tipe)").next().text().lowercase())
+        val year = document.select("tbody th:contains(Dirilis)").next().text().trim().toIntOrNull()
+        val statusText = document.select("tbody th:contains(Status)").next().text().trim()
+        val plotText = document.selectFirst("div.entry-content > p")?.text()
+        val tagsList = document.select("tbody th:contains(Genre)").next().select("a").map { it.text() }
+        val durationText = document.select("tbody th:contains(Durasi)").next().text().trim()
+
+        val tracker = APIHolder.getTracker(listOf(title), TrackerType.getTypes(type), year, true)
+        val malId = tracker?.malId
+
+        var animeMetaData: MetaAnimeData? = null
+        var tmdbid: Int? = null
+        var kitsuid: String? = null
+
+        if (malId != null) {
+            try {
+                val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
+                animeMetaData = parseAnimeData(syncMetaData)
+                tmdbid = animeMetaData?.mappings?.themoviedbId
+                kitsuid = animeMetaData?.mappings?.kitsuId
+            } catch (e: Exception) {
+            }
+        }
+
+        val logoUrl = fetchTmdbLogoUrl(
+            tmdbAPI = "https://api.themoviedb.org/3",
+            apiKey = "98ae14df2b8d8f8f8136499daf79f0e0",
+            type = type,
+            tmdbId = tmdbid,
+            appLangCode = "en"
+        )
+
+        val backgroundposter = animeMetaData?.images?.find { it.coverType == "Fanart" }?.url ?: tracker?.cover
+
+        val episodes = document.select("ul.daftar > li").amap {
+            val link = fixUrl(it.select("a").attr("href"))
+            val name = it.select("a").text()
+
+            var episodeNum = Regex("Episode\\s?(\\d+)").find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+            if (type == TvType.AnimeMovie && episodeNum == null) {
+                episodeNum = 1
+            }
+
+            val episodeKey = episodeNum?.toString()
+            val metaEp = if (episodeKey != null) animeMetaData?.episodes?.get(episodeKey) else null
+
+            val epOverview = metaEp?.overview
+            val finalOverview = if (!epOverview.isNullOrBlank()) {
+                epOverview
+            } else {
+                "Synopsis not yet available."
+            }
+
+            newEpisode(link) {
+                this.name = if (type == TvType.AnimeMovie) {
+                    animeMetaData?.titles?.get("en") ?: animeMetaData?.titles?.get("ja") ?: title
+                } else {
+                    metaEp?.title?.get("en") ?: metaEp?.title?.get("ja") ?: name
+                }
+
+                this.episode = episodeNum
+                this.score = Score.from10(metaEp?.rating)
+                this.posterUrl = metaEp?.image ?: animeMetaData?.images?.firstOrNull()?.url ?: ""
+                this.description = finalOverview
+                this.addDate(metaEp?.airDateUtc)
+                this.runTime = metaEp?.runtime
+            }
+        }.reversed()
+
+        val apiDescription = animeMetaData?.description?.replace(Regex("<.*?>"), "")
+        val rawPlot = apiDescription ?: animeMetaData?.episodes?.get("1")?.overview
+
+        val finalPlot = if (!rawPlot.isNullOrBlank()) {
+            rawPlot
+        } else {
+            plotText
+        }
+
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
+            this.engName = animeMetaData?.titles?.get("en") ?: title
+            this.japName = animeMetaData?.titles?.get("ja") ?: animeMetaData?.titles?.get("x-jat")
+            this.posterUrl = tracker?.image ?: poster
+            this.backgroundPosterUrl = backgroundposter
+            try { this.logoUrl = logoUrl } catch (_: Throwable) {}
+            this.year = year
+            this.duration = getDurationFromString(durationText)
+            addEpisodes(DubStatus.Subbed, episodes)
+            this.showStatus = getStatus(statusText)
+            this.plot = finalPlot
+            this.tags = tagsList
+            addMalId(malId)
+            addAniListId(tracker?.aniId?.toIntOrNull())
+            try { addKitsuId(kitsuid) } catch (_: Throwable) {}
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val document = request(data).document
+        val playerPath = "$mainUrl/utils/player/"
+        val mediaHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to mainUrl,
+            "Origin" to mainUrl,
+            "Accept" to "*/*",
+        )
+
+        // Collect all mirror options (site markup varies)
+        val options = document.select(
+            ".mobius > .mirror > option, .mirror option, select.mirror option, " +
+                ".mobius option[data-em], option[data-em], select option[value]"
+        )
+        if (options.isEmpty()) {
+            // Fallback: any data-em on page
+            document.select("[data-em]").forEach { el ->
+                safeApiCall {
+                    resolveMirrorOption(el.attr("data-em"), el.text(), data, playerPath, mediaHeaders, subtitleCallback, callback)
+                }
+            }
+            return true
+        }
+
+        options.amap { element ->
+            safeApiCall {
+                val encodedData = element.attr("data-em").ifBlank { element.attr("value") }
+                resolveMirrorOption(
+                    encodedData = encodedData,
+                    rawText = element.text().trim(),
+                    episodeUrl = data,
+                    playerPath = playerPath,
+                    mediaHeaders = mediaHeaders,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback,
+                )
+            }
+        }
+        return true
+    }
+
+    private suspend fun resolveMirrorOption(
+        encodedData: String,
+        rawText: String,
+        episodeUrl: String,
+        playerPath: String,
+        mediaHeaders: Map<String, String>,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        if (encodedData.isBlank() || encodedData.equals("0") || encodedData.length < 8) return
+
+        val decodedHtml = runCatching { base64Decode(encodedData) }.getOrNull() ?: return
+        val iframe = fixUrl(
+            Jsoup.parse(decodedHtml).select("iframe[src], embed[src], source[src], video[src]")
+                .firstOrNull()
+                ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+                .orEmpty()
+        )
+        if (iframe.isBlank() || iframe.contains("statistic", true)) return
+
+        val quality = getIndexQuality(rawText)
+        val serverName = cleanServerName(rawText)
+
+        fun emitDirect(stream: String, ref: String, name: String = serverName) {
+            if (stream.isBlank()) return
+            val absolute = when {
+                stream.startsWith("//") -> "https:$stream"
+                stream.startsWith("http") -> stream
+                else -> fixUrl(stream)
+            }
+            val type = when {
+                absolute.contains(".m3u8", true) -> ExtractorLinkType.M3U8
+                else -> ExtractorLinkType.VIDEO
+            }
+            // Headers required — bare URL without Referer → Exo ERROR_CODE_IO_BAD_HTTP_STATUS (2004)
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = absolute,
+                    type = type,
+                ) {
+                    this.referer = ref
+                    this.quality = quality
+                    this.headers = mapOf(
+                        "User-Agent" to mediaHeaders.getValue("User-Agent"),
+                        "Referer" to ref,
+                        "Origin" to mainUrl,
+                        "Accept" to "*/*",
+                    )
+                }
+            )
+        }
+
+        when {
+            iframe.endsWith(".mp4", true) || iframe.endsWith(".m3u8", true) ||
+                iframe.contains(".mp4?", true) || iframe.contains(".m3u8?", true) -> {
+                emitDirect(iframe, mainUrl)
+            }
+
+            iframe.contains("${playerPath}popup") || iframe.contains("popup.php") -> {
+                val encodedUrl = iframe.substringAfter("url=").substringBefore("&")
+                if (encodedUrl.isNotBlank()) {
+                    val realUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                    loadFixedExtractor(realUrl, serverName, quality, mainUrl, subtitleCallback, callback)
+                }
+            }
+
+            iframe.contains("player-kodir") || iframe.contains("${playerPath}kodir") ||
+                iframe.contains("kodir2") -> {
+                val res = request(iframe, ref = episodeUrl).text
+                var link = Jsoup.parse(
+                    res.substringAfter("= `", "").substringBefore("`;", "")
+                ).select("source").lastOrNull()?.attr("src")
+                if (link.isNullOrBlank()) {
+                    link = Jsoup.parse(res).select("source[src], video[src]").attr("src")
+                }
+                Regex("""https?://[^"'\\s<>]+\.(?:mp4|m3u8)[^"'\\s<>]*""", RegexOption.IGNORE_CASE)
+                    .find(res)?.value?.let { if (link.isNullOrBlank()) link = it }
+                if (!link.isNullOrBlank()) emitDirect(link, iframe)
+            }
+
+            iframe.contains("${playerPath}framezilla") || iframe.contains("uservideo.xyz") ||
+                iframe.contains("framezilla") -> {
+                val doc = request(iframe, ref = episodeUrl).document
+                val inner = doc.select("iframe[src], source[src], video[src]")
+                    .firstOrNull()
+                    ?.let { it.attr("src").ifBlank { it.attr("data-src") } }
+                    .orEmpty()
+                if (inner.isNotBlank()) {
+                    if (inner.contains(".mp4", true) || inner.contains(".m3u8", true)) {
+                        emitDirect(fixUrl(inner), iframe)
+                    } else {
+                        loadFixedExtractor(fixUrl(inner), serverName, quality, mainUrl, subtitleCallback, callback)
+                    }
+                }
+            }
+
+            iframe.contains("aghanim.xyz/tools/redirect/") || iframe.contains("/tools/redirect/") -> {
+                val id = iframe.substringAfter("id=").substringBefore("&")
+                if (id.isNotBlank()) {
+                    // try common dood-like hosts used by site
+                    listOf(
+                        "https://rasa-cintaku-semakin-berantai.xyz/v/$id",
+                        "https://dood.watch/e/$id",
+                        "https://dood.ws/e/$id",
+                    ).forEach { link ->
+                        loadFixedExtractor(link, serverName, quality, mainUrl, subtitleCallback, callback)
+                    }
+                }
+            }
+
+            // Lokal / Buzi / site-hosted players under utils/player
+            iframe.contains(playerPath) || iframe.contains("/utils/player") ||
+                iframe.contains(mainUrl) && (iframe.contains("player") || iframe.contains("embed")) -> {
+                val res = request(iframe, ref = episodeUrl)
+                val doc = res.document
+                val link = doc.select("source[src], video[src]").attr("src")
+                    .ifBlank {
+                        Regex("""https?://[^"'\\s<>]+\.(?:mp4|m3u8)[^"'\\s<>]*""", RegexOption.IGNORE_CASE)
+                            .find(res.text)?.value.orEmpty()
+                    }
+                if (link.isNotBlank()) {
+                    emitDirect(link, iframe)
+                } else {
+                    val nested = doc.select("iframe[src]").attr("src")
+                    if (nested.isNotBlank()) {
+                        loadFixedExtractor(fixUrl(nested), serverName, quality, mainUrl, subtitleCallback, callback)
+                    }
+                }
+            }
+
+            else -> {
+                loadFixedExtractor(iframe, serverName, quality, mainUrl, subtitleCallback, callback)
+            }
+        }
+    }
+
+    private fun cleanServerName(raw: String): String {
+        val t = raw.trim()
+            .replace(Regex("""\[.*?\]"""), "")
+            .replace(Regex("""\(.*?\)"""), "")
+            .trim()
+        // "Mixdrop 1080p" / "MP4 720p" / "Dodo 1080" / "Lokal" / "Buzi"
+        val first = t.split(Regex("\\s+")).firstOrNull().orEmpty()
+        return first.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            .ifBlank { name }
+    }
+
+    private suspend fun loadFixedExtractor(
+        url: String,
+        serverName: String,
+        quality: Int?,
+        referer: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fixed = when {
+            url.startsWith("//") -> "https:$url"
+            else -> url
+        }
+        val ref = referer ?: mainUrl
+        val baseHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to ref,
+            "Origin" to mainUrl,
+            "Accept" to "*/*",
+        )
+
+        // Direct media — never bare without headers (2004)
+        if (fixed.contains(".mp4", true) || fixed.contains(".m3u8", true)) {
+            callback(
+                newExtractorLink(
+                    source = serverName,
+                    name = serverName,
+                    url = fixed,
+                    type = if (fixed.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO,
+                ) {
+                    this.referer = ref
+                    this.quality = quality ?: Qualities.Unknown.value
+                    this.headers = baseHeaders
+                }
+            )
+            return
+        }
+
+        var got = false
+        loadExtractor(fixed, ref, subtitleCallback) { link ->
+            got = true
+            val finalName = if (serverName.equals(link.name, true) || link.name.isBlank()) {
+                serverName
+            } else {
+                "$serverName"
+            }
+            runBlocking {
+                val merged = LinkedHashMap<String, String>()
+                merged.putAll(baseHeaders)
+                merged.putAll(link.headers)
+                if (!merged.containsKey("Referer")) merged["Referer"] = ref
+                if (!merged.containsKey("User-Agent")) merged["User-Agent"] = baseHeaders.getValue("User-Agent")
+                callback(
+                    newExtractorLink(
+                        source = finalName,
+                        name = finalName,
+                        url = link.url,
+                        type = link.type,
+                    ) {
+                        this.referer = link.referer.ifBlank { ref }
+                        this.quality = quality?.takeIf { it > 0 } ?: link.quality
+                        this.headers = merged
+                        this.extractorData = link.extractorData
+                    }
+                )
+            }
+        }
+
+        // If no built-in extractor matched, still try common host rewrites
+        if (!got) {
+            when {
+                fixed.contains("mixdrop", true) || fixed.contains("m1xdrop", true) -> {
+                    // force path through registered MixDrop extractors via loadExtractor on /e/ form
+                    val id = Regex("""/(?:e|f)/([A-Za-z0-9]+)""").find(fixed)?.groupValues?.getOrNull(1)
+                    if (id != null) {
+                        listOf(
+                            "https://m1xdrop.bz/e/$id",
+                            "https://mixdrop.ag/e/$id",
+                            "https://mixdrop.to/e/$id",
+                        ).forEach { u ->
+                            loadExtractor(u, ref, subtitleCallback) { link ->
+                                runBlocking {
+                                    callback(
+                                        newExtractorLink(serverName, serverName, link.url, link.type) {
+                                            this.referer = link.referer.ifBlank { ref }
+                                            this.quality = quality ?: link.quality
+                                            this.headers = baseHeaders + link.headers
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                fixed.contains("pixeldrain", true) || fixed.contains("pixel.", true) -> {
+                    loadExtractor(fixed, ref, subtitleCallback, callback)
+                }
+            }
+        }
+    }
+
+    private fun getIndexQuality(str: String): Int {
+        return Regex("""(\d{3,4})[pP]""").find(str)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: Qualities.Unknown.value
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class MetaImage(
+        @param:JsonProperty("coverType") val coverType: String?,
+        @param:JsonProperty("url") val url: String?
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class MetaEpisode(
+        @param:JsonProperty("episode") val episode: String?,
+        @param:JsonProperty("airDateUtc") val airDateUtc: String?,
+        @param:JsonProperty("runtime") val runtime: Int?,
+        @param:JsonProperty("image") val image: String?,
+        @param:JsonProperty("title") val title: Map<String, String>?,
+        @param:JsonProperty("overview") val overview: String?,
+        @param:JsonProperty("rating") val rating: String?,
+        @param:JsonProperty("finaleType") val finaleType: String?
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class MetaAnimeData(
+        @param:JsonProperty("titles") val titles: Map<String, String>?,
+        @param:JsonProperty("description") val description: String?,
+        @param:JsonProperty("images") val images: List<MetaImage>?,
+        @param:JsonProperty("episodes") val episodes: Map<String, MetaEpisode>?,
+        @param:JsonProperty("mappings") val mappings: MetaMappings? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class MetaMappings(
+        @param:JsonProperty("themoviedb_id") val themoviedbId: Int? = null,
+        @param:JsonProperty("kitsu_id") val kitsuId: String? = null
+    )
+
+    private fun parseAnimeData(jsonString: String): MetaAnimeData? {
+        return try {
+            mapper.readValue(jsonString, MetaAnimeData::class.java)
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
+suspend fun fetchTmdbLogoUrl(
+    tmdbAPI: String,
+    apiKey: String,
+    type: TvType,
+    tmdbId: Int?,
+    appLangCode: String?
+): String? {
+    if (tmdbId == null) return null
+
+    val url = if (type == TvType.AnimeMovie)
+        "$tmdbAPI/movie/$tmdbId/images?api_key=$apiKey"
+    else
+        "$tmdbAPI/tv/$tmdbId/images?api_key=$apiKey"
+
+    val json = runCatching { JSONObject(app.get(url).text) }.getOrNull() ?: return null
+    val logos = json.optJSONArray("logos") ?: return null
+    if (logos.length() == 0) return null
+
+    val lang = appLangCode?.trim()?.lowercase()
+
+    fun path(o: JSONObject) = o.optString("file_path")
+    fun isSvg(o: JSONObject) = path(o).endsWith(".svg", true)
+    fun urlOf(o: JSONObject) = "https://image.tmdb.org/t/p/w500${path(o)}"
+
+    var svgFallback: JSONObject? = null
+
+    for (i in 0 until logos.length()) {
+        val logo = logos.optJSONObject(i) ?: continue
+        val p = path(logo)
+        if (p.isBlank()) continue
+
+        val l = logo.optString("iso_639_1").trim().lowercase()
+        if (l == lang) {
+            if (!isSvg(logo)) return urlOf(logo)
+            if (svgFallback == null) svgFallback = logo
+        }
+    }
+    svgFallback?.let { return urlOf(it) }
+
+    var best: JSONObject? = null
+    var bestSvg: JSONObject? = null
+
+    fun voted(o: JSONObject) = o.optDouble("vote_average", 0.0) > 0 && o.optInt("vote_count", 0) > 0
+    fun better(a: JSONObject?, b: JSONObject): Boolean {
+        if (a == null) return true
+        val aAvg = a.optDouble("vote_average", 0.0)
+        val aCnt = a.optInt("vote_count", 0)
+        val bAvg = b.optDouble("vote_average", 0.0)
+        val bCnt = b.optInt("vote_count", 0)
+        return bAvg > aAvg || (bAvg == aAvg && bCnt > aCnt)
+    }
+
+    for (i in 0 until logos.length()) {
+        val logo = logos.optJSONObject(i) ?: continue
+        if (!voted(logo)) continue
+
+        if (isSvg(logo)) {
+            if (better(bestSvg, logo)) bestSvg = logo
+        } else {
+            if (better(best, logo)) best = logo
+        }
+    }
+
+    best?.let { return urlOf(it) }
+    bestSvg?.let { return urlOf(it) }
+
+    return null
+}
